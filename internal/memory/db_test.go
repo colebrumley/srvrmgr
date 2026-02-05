@@ -197,3 +197,50 @@ func TestRememberWithEmbedding(t *testing.T) {
 		t.Error("RememberWithEmbedding() returned id = 0, want > 0")
 	}
 }
+
+func TestRecallSemantic(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	// Create embeddings that are similar and different
+	embedding1 := make([]float32, 384)
+	embedding2 := make([]float32, 384)
+	embedding3 := make([]float32, 384)
+
+	for i := range embedding1 {
+		embedding1[i] = float32(i) / 384.0       // Similar to query
+		embedding2[i] = float32(i) / 384.0 + 0.1 // Also similar
+		embedding3[i] = float32(384-i) / 384.0   // Different (reversed)
+	}
+
+	db.RememberWithEmbedding("similar content 1", "test", "", embedding1)
+	db.RememberWithEmbedding("similar content 2", "test", "", embedding2)
+	db.RememberWithEmbedding("different content", "test", "", embedding3)
+
+	// Query with embedding similar to embedding1
+	queryEmbedding := make([]float32, 384)
+	for i := range queryEmbedding {
+		queryEmbedding[i] = float32(i) / 384.0
+	}
+
+	results, err := db.RecallSemantic(queryEmbedding, "", 10)
+	if err != nil {
+		t.Fatalf("RecallSemantic() error = %v", err)
+	}
+
+	if len(results) != 3 {
+		t.Errorf("RecallSemantic() returned %d results, want 3", len(results))
+	}
+
+	// First result should be most similar (embedding1)
+	if results[0].Content != "similar content 1" {
+		t.Errorf("First result should be 'similar content 1', got '%s'", results[0].Content)
+	}
+
+	// Scores should be descending
+	for i := 1; i < len(results); i++ {
+		if results[i].Score > results[i-1].Score {
+			t.Errorf("Results not sorted by score: %f > %f", results[i].Score, results[i-1].Score)
+		}
+	}
+}

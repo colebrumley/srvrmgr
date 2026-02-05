@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -24,6 +25,12 @@ type Memory struct {
 	RuleName  string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// MemoryWithScore represents a memory with its similarity score
+type MemoryWithScore struct {
+	Memory
+	Score float32
 }
 
 // DB wraps the SQLite database connection
@@ -208,4 +215,90 @@ func bytesToFloat32Slice(bytes []byte) []float32 {
 		floats[i] = math.Float32frombits(bits)
 	}
 	return floats
+}
+
+// RecallSemantic searches memories using cosine similarity
+func (d *DB) RecallSemantic(queryEmbedding []float32, category string, limit int) ([]MemoryWithScore, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	var rows *sql.Rows
+	var err error
+
+	if category != "" {
+		rows, err = d.db.Query(`
+			SELECT id, content, category, rule_name, embedding, created_at, updated_at
+			FROM memories
+			WHERE embedding IS NOT NULL AND category = ?
+		`, category)
+	} else {
+		rows, err = d.db.Query(`
+			SELECT id, content, category, rule_name, embedding, created_at, updated_at
+			FROM memories
+			WHERE embedding IS NOT NULL
+		`)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("querying memories: %w", err)
+	}
+	defer rows.Close()
+
+	var results []MemoryWithScore
+	for rows.Next() {
+		var m Memory
+		var cat, ruleName sql.NullString
+		var embeddingBytes []byte
+
+		if err := rows.Scan(&m.ID, &m.Content, &cat, &ruleName, &embeddingBytes, &m.CreatedAt, &m.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning memory: %w", err)
+		}
+		m.Category = cat.String
+		m.RuleName = ruleName.String
+
+		if len(embeddingBytes) == 0 {
+			continue
+		}
+
+		embedding := bytesToFloat32Slice(embeddingBytes)
+		score := cosineSimilarity(queryEmbedding, embedding)
+
+		results = append(results, MemoryWithScore{Memory: m, Score: score})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Sort by score descending
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	// Limit results
+	if len(results) > limit {
+		results = results[:limit]
+	}
+
+	return results, nil
+}
+
+// cosineSimilarity computes cosine similarity between two vectors
+func cosineSimilarity(a, b []float32) float32 {
+	if len(a) != len(b) {
+		return 0
+	}
+
+	var dot, normA, normB float32
+	for i := range a {
+		dot += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+
+	return dot / (float32(math.Sqrt(float64(normA))) * float32(math.Sqrt(float64(normB))))
 }
