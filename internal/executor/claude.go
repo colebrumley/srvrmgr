@@ -91,13 +91,13 @@ func BuildArgsWithMemory(cfg config.ClaudeConfig, prompt string, debug bool, mem
 
 		tmpFile, err := os.CreateTemp("", "srvrmgr-mcp-*.json")
 		if err != nil {
-			return nil, nil, fmt.Errorf("creating temp MCP config: %w", err)
+			return nil, func() {}, fmt.Errorf("creating temp MCP config: %w", err)
 		}
 
 		if err := json.NewEncoder(tmpFile).Encode(mcpCfg); err != nil {
 			tmpFile.Close()
 			os.Remove(tmpFile.Name())
-			return nil, nil, fmt.Errorf("writing MCP config: %w", err)
+			return nil, func() {}, fmt.Errorf("writing MCP config: %w", err)
 		}
 		tmpFile.Close()
 
@@ -116,48 +116,7 @@ func BuildArgsWithMemory(cfg config.ClaudeConfig, prompt string, debug bool, mem
 
 // Execute runs Claude Code with the given configuration
 func Execute(ctx context.Context, prompt string, cfg config.ClaudeConfig, user string, debug bool, workDir string) (*Result, error) {
-	args := BuildArgs(cfg, prompt, debug)
-
-	var cmd *exec.Cmd
-	if user != "" {
-		sudoArgs := append([]string{"-u", user, "claude"}, args...)
-		cmd = exec.CommandContext(ctx, "sudo", sudoArgs...)
-	} else {
-		cmd = exec.CommandContext(ctx, "claude", args...)
-	}
-
-	if workDir != "" {
-		cmd.Dir = workDir
-	}
-
-	start := time.Now()
-	output, err := cmd.CombinedOutput()
-	duration := time.Since(start)
-
-	if err != nil {
-		// Check if it was a context cancellation (timeout)
-		if ctx.Err() == context.DeadlineExceeded {
-			return &Result{
-				State:    "timeout",
-				Error:    "execution timed out",
-				Output:   string(output),
-				Duration: duration,
-			}, nil
-		}
-
-		return &Result{
-			State:    "failure",
-			Error:    err.Error(),
-			Output:   string(output),
-			Duration: duration,
-		}, nil
-	}
-
-	return &Result{
-		State:    "success",
-		Output:   string(output),
-		Duration: duration,
-	}, nil
+	return ExecuteWithMemory(ctx, prompt, cfg, user, debug, workDir, false, "")
 }
 
 // ExecuteWithMemory runs Claude Code with optional memory MCP injection
