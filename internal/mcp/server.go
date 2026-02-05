@@ -132,7 +132,7 @@ func (s *Server) handleRecall(ctx context.Context, req *mcp.CallToolRequest, inp
 		mode = "semantic"
 	}
 
-	var results []MemoryResult
+	results := []MemoryResult{}
 
 	if mode == "keyword" {
 		// Use FTS5 keyword search
