@@ -20,12 +20,14 @@ action:
   prompt: |
     A new file appeared in Downloads: {{file_path}}
 
-    Move it to the appropriate subfolder based on type:
-    - Images (jpg, png, gif, webp, svg) → ~/Pictures/Downloads
-    - Documents (pdf, doc, docx, txt, md) → ~/Documents/Downloads
-    - Videos (mp4, mov, avi, mkv) → ~/Movies/Downloads
-    - Archives (zip, tar, gz, rar) → extract to ~/Downloads/Extracted/
-    - Other → leave in place, just log what it is
+    First, use the recall tool to check if you have any stored knowledge about
+    this type of file or the Downloads folder organization patterns.
+
+    Then organize the file appropriately. If you learn something new about the
+    file patterns or organization conventions, use the remember tool to store
+    that knowledge for future use.
+
+    Available tools: Read, Write, Bash (for mv/mkdir), Glob, Grep
 
 claude:
   model: sonnet
