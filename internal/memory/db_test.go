@@ -168,3 +168,14 @@ func TestForgetNotFound(t *testing.T) {
 		t.Error("Forget() should return error for non-existent ID")
 	}
 }
+
+func TestOpenDBCreatesEmbeddingColumn(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	// Verify embedding column exists by inserting with it
+	_, err := db.db.Exec("INSERT INTO memories (content, embedding) VALUES (?, ?)", "test", []byte{1, 2, 3, 4})
+	if err != nil {
+		t.Errorf("embedding column not created: %v", err)
+	}
+}

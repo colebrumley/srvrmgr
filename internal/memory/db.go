@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS memories (
     content TEXT NOT NULL,
     category TEXT,
     rule_name TEXT,
+    embedding BLOB,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
