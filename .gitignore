@@ -1,0 +1,20 @@
+# Go
+bin/
+*.exe
+
+# Logs
+*.log
+/Library/Logs/srvrmgr/
+
+# Config (local development)
+.env
+.env.*
+
+# macOS
+.DS_Store
+
+# Worktrees
+.worktrees/
+
+# Test artifacts
+coverage.out
