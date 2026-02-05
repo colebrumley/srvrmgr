@@ -5,14 +5,16 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/colebrumley/srvrmgr/internal/embedder"
 	"github.com/colebrumley/srvrmgr/internal/memory"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Server wraps the MCP server with memory tools
 type Server struct {
-	db     *memory.DB
-	server *mcp.Server
+	db       *memory.DB
+	embedder *embedder.Embedder
+	server   *mcp.Server
 }
 
 // RememberInput is the input schema for the remember tool
@@ -29,8 +31,10 @@ type RememberOutput struct {
 
 // RecallInput is the input schema for the recall tool
 type RecallInput struct {
-	Query    string `json:"query" jsonschema:"Search terms (full-text search)"`
+	Query    string `json:"query" jsonschema:"Search terms"`
 	Category string `json:"category,omitempty" jsonschema:"Optional category filter"`
+	Mode     string `json:"mode,omitempty" jsonschema:"Search mode: semantic (default) or keyword"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"Max results (default 10)"`
 }
 
 // RecallOutput is the output schema for the recall tool
@@ -41,9 +45,10 @@ type RecallOutput struct {
 
 // MemoryResult is a single memory in recall results
 type MemoryResult struct {
-	ID       int64  `json:"id"`
-	Content  string `json:"content"`
-	Category string `json:"category,omitempty"`
+	ID       int64   `json:"id"`
+	Content  string  `json:"content"`
+	Category string  `json:"category,omitempty"`
+	Score    float32 `json:"score,omitempty"`
 }
 
 // ForgetInput is the input schema for the forget tool
@@ -63,7 +68,13 @@ func NewServer(dbPath string) (*Server, error) {
 		return nil, fmt.Errorf("opening memory database: %w", err)
 	}
 
-	s := &Server{db: db}
+	emb, err := embedder.New()
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("creating embedder: %w", err)
+	}
+
+	s := &Server{db: db, embedder: emb}
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "srvrmgr-memory",
@@ -93,7 +104,14 @@ func NewServer(dbPath string) (*Server, error) {
 }
 
 func (s *Server) handleRemember(ctx context.Context, req *mcp.CallToolRequest, input RememberInput) (*mcp.CallToolResult, RememberOutput, error) {
-	id, err := s.db.Remember(input.Content, input.Category, "")
+	// Generate embedding
+	embedding, err := s.embedder.Embed(input.Content)
+	if err != nil {
+		// Log warning but continue without embedding
+		embedding = nil
+	}
+
+	id, err := s.db.RememberWithEmbedding(input.Content, input.Category, "", embedding)
 	if err != nil {
 		return nil, RememberOutput{}, fmt.Errorf("failed to store memory: %w", err)
 	}
@@ -104,17 +122,49 @@ func (s *Server) handleRemember(ctx context.Context, req *mcp.CallToolRequest, i
 }
 
 func (s *Server) handleRecall(ctx context.Context, req *mcp.CallToolRequest, input RecallInput) (*mcp.CallToolResult, RecallOutput, error) {
-	memories, err := s.db.Recall(input.Query, input.Category)
-	if err != nil {
-		return nil, RecallOutput{}, fmt.Errorf("failed to search memories: %w", err)
+	limit := input.Limit
+	if limit <= 0 {
+		limit = 10
 	}
 
-	results := make([]MemoryResult, len(memories))
-	for i, m := range memories {
-		results[i] = MemoryResult{
-			ID:       m.ID,
-			Content:  m.Content,
-			Category: m.Category,
+	mode := input.Mode
+	if mode == "" {
+		mode = "semantic"
+	}
+
+	var results []MemoryResult
+
+	if mode == "keyword" {
+		// Use FTS5 keyword search
+		memories, err := s.db.Recall(input.Query, input.Category)
+		if err != nil {
+			return nil, RecallOutput{}, fmt.Errorf("failed to search memories: %w", err)
+		}
+		for _, m := range memories {
+			results = append(results, MemoryResult{
+				ID:       m.ID,
+				Content:  m.Content,
+				Category: m.Category,
+			})
+		}
+	} else {
+		// Use semantic search
+		queryEmbedding, err := s.embedder.Embed(input.Query)
+		if err != nil {
+			return nil, RecallOutput{}, fmt.Errorf("failed to embed query: %w", err)
+		}
+
+		memories, err := s.db.RecallSemantic(queryEmbedding, input.Category, limit)
+		if err != nil {
+			return nil, RecallOutput{}, fmt.Errorf("failed to search memories: %w", err)
+		}
+		for _, m := range memories {
+			results = append(results, MemoryResult{
+				ID:       m.ID,
+				Content:  m.Content,
+				Category: m.Category,
+				Score:    m.Score,
+			})
 		}
 	}
 
@@ -142,7 +192,10 @@ func (s *Server) Run(ctx context.Context) error {
 	return s.server.Run(ctx, &mcp.StdioTransport{})
 }
 
-// Close closes the database connection
+// Close closes the database connection and embedder
 func (s *Server) Close() error {
+	if s.embedder != nil {
+		s.embedder.Close()
+	}
 	return s.db.Close()
 }
