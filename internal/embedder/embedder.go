@@ -12,52 +12,73 @@ import (
 	"github.com/knights-analytics/hugot/pipelines"
 )
 
-// Embedder wraps the hugot feature extraction pipeline
+// Embedder wraps the hugot feature extraction pipeline with lazy initialization
 type Embedder struct {
 	session  *hugot.Session
 	pipeline *pipelines.FeatureExtractionPipeline
 	modelDir string
 	mu       sync.Mutex
+	initOnce sync.Once
+	initErr  error
 }
 
-// New creates a new Embedder, extracting embedded model files to a temp directory
+// New creates a new Embedder with lazy initialization
+// The model is not loaded until the first Embed call
 func New() (*Embedder, error) {
-	// Create temp directory for model files
-	modelDir, err := os.MkdirTemp("", "srvrmgr-embedder-*")
-	if err != nil {
-		return nil, fmt.Errorf("creating temp directory: %w", err)
-	}
+	return &Embedder{}, nil
+}
 
-	// Extract embedded model files
-	if err := extractModelFiles(modelDir); err != nil {
-		os.RemoveAll(modelDir)
-		return nil, fmt.Errorf("extracting model files: %w", err)
+// NewEager creates a new Embedder and loads the model immediately
+func NewEager() (*Embedder, error) {
+	e := &Embedder{}
+	if err := e.init(); err != nil {
+		return nil, err
 	}
+	return e, nil
+}
 
-	// Create hugot session with pure Go backend
-	session, err := hugot.NewGoSession()
-	if err != nil {
-		os.RemoveAll(modelDir)
-		return nil, fmt.Errorf("creating hugot session: %w", err)
-	}
+// init performs the actual model initialization
+func (e *Embedder) init() error {
+	e.initOnce.Do(func() {
+		// Create temp directory for model files
+		modelDir, err := os.MkdirTemp("", "srvrmgr-embedder-*")
+		if err != nil {
+			e.initErr = fmt.Errorf("creating temp directory: %w", err)
+			return
+		}
+		e.modelDir = modelDir
 
-	// Create feature extraction pipeline
-	config := hugot.FeatureExtractionConfig{
-		ModelPath: modelDir,
-		Name:      "embeddings",
-	}
-	pipeline, err := hugot.NewPipeline(session, config)
-	if err != nil {
-		session.Destroy()
-		os.RemoveAll(modelDir)
-		return nil, fmt.Errorf("creating pipeline: %w", err)
-	}
+		// Extract embedded model files
+		if err := extractModelFiles(modelDir); err != nil {
+			os.RemoveAll(modelDir)
+			e.initErr = fmt.Errorf("extracting model files: %w", err)
+			return
+		}
 
-	return &Embedder{
-		session:  session,
-		pipeline: pipeline,
-		modelDir: modelDir,
-	}, nil
+		// Create hugot session with pure Go backend
+		session, err := hugot.NewGoSession()
+		if err != nil {
+			os.RemoveAll(modelDir)
+			e.initErr = fmt.Errorf("creating hugot session: %w", err)
+			return
+		}
+		e.session = session
+
+		// Create feature extraction pipeline
+		config := hugot.FeatureExtractionConfig{
+			ModelPath: modelDir,
+			Name:      "embeddings",
+		}
+		pipeline, err := hugot.NewPipeline(session, config)
+		if err != nil {
+			session.Destroy()
+			os.RemoveAll(modelDir)
+			e.initErr = fmt.Errorf("creating pipeline: %w", err)
+			return
+		}
+		e.pipeline = pipeline
+	})
+	return e.initErr
 }
 
 // extractModelFiles extracts embedded model files to the target directory
@@ -99,6 +120,11 @@ func (e *Embedder) Embed(text string) ([]float32, error) {
 
 // EmbedBatch generates embeddings for multiple texts
 func (e *Embedder) EmbedBatch(texts []string) ([][]float32, error) {
+	// Lazy initialization
+	if err := e.init(); err != nil {
+		return nil, err
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 

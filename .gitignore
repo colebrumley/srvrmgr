@@ -23,3 +23,7 @@ coverage.out
 
 # Embedding model (downloaded at build time)
 internal/embedder/models/model.onnx
+
+# Database files
+*.db
+memory.db

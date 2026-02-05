@@ -4,6 +4,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/colebrumley/srvrmgr/internal/embedder"
 	"github.com/colebrumley/srvrmgr/internal/memory"
@@ -190,6 +191,41 @@ func (s *Server) handleForget(ctx context.Context, req *mcp.CallToolRequest, inp
 // Run starts the MCP server on stdio
 func (s *Server) Run(ctx context.Context) error {
 	return s.server.Run(ctx, &mcp.StdioTransport{})
+}
+
+// RunHTTP starts the MCP server as an HTTP server on the given address
+// Uses SSE transport with endpoint at /sse for compatibility with Claude Code
+func (s *Server) RunHTTP(ctx context.Context, addr string) error {
+	sseHandler := mcp.NewSSEHandler(func(r *http.Request) *mcp.Server {
+		return s.server
+	}, nil)
+
+	mux := http.NewServeMux()
+	// Serve SSE at both root and /sse path for compatibility
+	mux.Handle("/", sseHandler)
+	mux.Handle("/sse", sseHandler)
+
+	httpServer := &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+
+	// Shutdown gracefully on context cancellation
+	go func() {
+		<-ctx.Done()
+		httpServer.Shutdown(context.Background())
+	}()
+
+	err := httpServer.ListenAndServe()
+	if err == http.ErrServerClosed {
+		return nil
+	}
+	return err
+}
+
+// MCPServer returns the underlying MCP server for direct use
+func (s *Server) MCPServer() *mcp.Server {
+	return s.server
 }
 
 // Close closes the database connection and embedder

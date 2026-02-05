@@ -28,6 +28,7 @@ type Daemon struct {
 	logger     *slog.Logger
 	webhooks   map[string]*trigger.Webhook
 	httpServer *http.Server
+	daemonPath string // Path to daemon executable for MCP stdio transport
 	mu         sync.RWMutex
 }
 
@@ -58,6 +59,16 @@ func (d *Daemon) Run(ctx context.Context) error {
 	)
 
 	d.logger.Info("starting daemon", "config", d.configPath, "rules_dir", d.rulesDir)
+
+	// Get daemon path for MCP stdio transport
+	if d.config.Memory.Enabled {
+		daemonPath, err := os.Executable()
+		if err != nil {
+			d.logger.Warn("could not determine daemon path, memory disabled", "error", err)
+		} else {
+			d.daemonPath = daemonPath
+		}
+	}
 
 	// Load rules
 	if err := d.loadRules(); err != nil {
@@ -236,15 +247,8 @@ func (d *Daemon) handleEvent(ctx context.Context, event trigger.Event) {
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Get daemon executable path for memory MCP injection
-	daemonPath, err := os.Executable()
-	if err != nil {
-		logger.Warn("could not determine daemon path, memory MCP disabled", "error", err)
-		daemonPath = ""
-	}
-
 	memoryEnabled := d.isMemoryEnabled(rule)
-	result, err := executor.ExecuteWithMemory(execCtx, prompt, claudeCfg, rule.RunAsUser, d.config.Logging.Debug, workDir, memoryEnabled, daemonPath)
+	result, err := executor.ExecuteWithMemory(execCtx, prompt, claudeCfg, rule.RunAsUser, d.config.Logging.Debug, workDir, memoryEnabled, d.daemonPath)
 	if err != nil {
 		logger.Error("execution error", "error", err)
 		d.handleFailure(ctx, rule, event, err)

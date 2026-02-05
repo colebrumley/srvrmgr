@@ -13,10 +13,12 @@ import (
 	"github.com/colebrumley/srvrmgr/internal/config"
 )
 
-// MCPServerConfig represents an MCP server configuration
+// MCPServerConfig represents an MCP server configuration (stdio)
 type MCPServerConfig struct {
-	Command string   `json:"command"`
+	Command string   `json:"command,omitempty"`
 	Args    []string `json:"args,omitempty"`
+	Type    string   `json:"type,omitempty"`
+	URL     string   `json:"url,omitempty"`
 }
 
 // MCPConfig represents the MCP configuration file format
@@ -73,17 +75,18 @@ func BuildArgs(cfg config.ClaudeConfig, prompt string, debug bool) []string {
 }
 
 // BuildArgsWithMemory constructs command-line arguments with optional memory MCP injection
+// If mcpURL is provided, uses HTTP transport; otherwise falls back to stdio with daemonPath
 // Returns the args slice, a cleanup function to remove temp files, and any error
-func BuildArgsWithMemory(cfg config.ClaudeConfig, prompt string, debug bool, memoryEnabled bool, daemonPath string) ([]string, func(), error) {
+func BuildArgsWithMemory(cfg config.ClaudeConfig, prompt string, debug bool, memoryEnabled bool, mcpURL string) ([]string, func(), error) {
 	args := BuildArgs(cfg, prompt, debug)
 	cleanup := func() {}
 
-	if memoryEnabled && daemonPath != "" {
-		// Create temporary MCP config file
+	if memoryEnabled && mcpURL != "" {
+		// mcpURL is actually the daemon path for stdio transport
 		mcpCfg := MCPConfig{
 			MCPServers: map[string]MCPServerConfig{
 				"srvrmgr-memory": {
-					Command: daemonPath,
+					Command: mcpURL,
 					Args:    []string{"mcp-server"},
 				},
 			},
@@ -120,8 +123,9 @@ func Execute(ctx context.Context, prompt string, cfg config.ClaudeConfig, user s
 }
 
 // ExecuteWithMemory runs Claude Code with optional memory MCP injection
-func ExecuteWithMemory(ctx context.Context, prompt string, cfg config.ClaudeConfig, user string, debug bool, workDir string, memoryEnabled bool, daemonPath string) (*Result, error) {
-	args, cleanup, err := BuildArgsWithMemory(cfg, prompt, debug, memoryEnabled, daemonPath)
+// mcpURL should be the HTTP URL of the MCP server (e.g., "http://127.0.0.1:9877")
+func ExecuteWithMemory(ctx context.Context, prompt string, cfg config.ClaudeConfig, user string, debug bool, workDir string, memoryEnabled bool, mcpURL string) (*Result, error) {
+	args, cleanup, err := BuildArgsWithMemory(cfg, prompt, debug, memoryEnabled, mcpURL)
 	if err != nil {
 		return nil, err
 	}
