@@ -20,3 +20,6 @@ bin/
 
 # Test artifacts
 coverage.out
+
+# Embedding model (downloaded at build time)
+internal/embedder/models/model.onnx
