@@ -3,7 +3,7 @@ module github.com/colebrumley/srvrmgr
 go 1.25.5
 
 require (
-	github.com/fsnotify/fsnotify v1.7.0
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/knights-analytics/hugot v0.6.2
 	github.com/modelcontextprotocol/go-sdk v1.2.0
 	github.com/robfig/cron/v3 v3.0.1
