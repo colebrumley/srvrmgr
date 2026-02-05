@@ -125,3 +125,44 @@ func TestToolHandlers(t *testing.T) {
 		}
 	})
 }
+
+func TestSemanticRecall(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	server, err := NewServer(dbPath)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+	defer server.Close()
+
+	ctx := context.Background()
+
+	// Remember some content
+	server.handleRemember(ctx, nil, RememberInput{
+		Content:  "The API returns timestamps in UTC format",
+		Category: "api-behaviors",
+	})
+	server.handleRemember(ctx, nil, RememberInput{
+		Content:  "Database queries should use prepared statements",
+		Category: "best-practices",
+	})
+
+	// Semantic search for time-related content
+	_, output, err := server.handleRecall(ctx, nil, RecallInput{
+		Query: "time format",
+		Mode:  "semantic",
+	})
+	if err != nil {
+		t.Fatalf("handleRecall() error = %v", err)
+	}
+
+	if output.Count == 0 {
+		t.Error("Expected to find memories with semantic search")
+	}
+
+	// The timestamp memory should rank higher for "time format" query
+	if output.Count > 0 && output.Memories[0].Score == 0 {
+		t.Error("Expected non-zero similarity score")
+	}
+}
