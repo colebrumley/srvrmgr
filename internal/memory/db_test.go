@@ -179,3 +179,21 @@ func TestOpenDBCreatesEmbeddingColumn(t *testing.T) {
 		t.Errorf("embedding column not created: %v", err)
 	}
 }
+
+func TestRememberWithEmbedding(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	embedding := make([]float32, 384)
+	for i := range embedding {
+		embedding[i] = float32(i) / 384.0
+	}
+
+	id, err := db.RememberWithEmbedding("test content", "test-category", "test-rule", embedding)
+	if err != nil {
+		t.Fatalf("RememberWithEmbedding() error = %v", err)
+	}
+	if id == 0 {
+		t.Error("RememberWithEmbedding() returned id = 0, want > 0")
+	}
+}

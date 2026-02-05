@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -164,4 +165,47 @@ func (d *DB) Forget(id int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// RememberWithEmbedding stores a new memory with its embedding and returns its ID
+func (d *DB) RememberWithEmbedding(content, category, ruleName string, embedding []float32) (int64, error) {
+	var embeddingBytes []byte
+	if embedding != nil {
+		embeddingBytes = float32SliceToBytes(embedding)
+	}
+
+	result, err := d.db.Exec(
+		"INSERT INTO memories (content, category, rule_name, embedding) VALUES (?, ?, ?, ?)",
+		content, category, ruleName, embeddingBytes,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("inserting memory: %w", err)
+	}
+	return result.LastInsertId()
+}
+
+// float32SliceToBytes converts a float32 slice to bytes
+func float32SliceToBytes(floats []float32) []byte {
+	bytes := make([]byte, len(floats)*4)
+	for i, f := range floats {
+		bits := math.Float32bits(f)
+		bytes[i*4] = byte(bits)
+		bytes[i*4+1] = byte(bits >> 8)
+		bytes[i*4+2] = byte(bits >> 16)
+		bytes[i*4+3] = byte(bits >> 24)
+	}
+	return bytes
+}
+
+// bytesToFloat32Slice converts bytes back to float32 slice
+func bytesToFloat32Slice(bytes []byte) []float32 {
+	floats := make([]float32, len(bytes)/4)
+	for i := range floats {
+		bits := uint32(bytes[i*4]) |
+			uint32(bytes[i*4+1])<<8 |
+			uint32(bytes[i*4+2])<<16 |
+			uint32(bytes[i*4+3])<<24
+		floats[i] = math.Float32frombits(bits)
+	}
+	return floats
 }
