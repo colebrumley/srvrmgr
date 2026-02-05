@@ -37,7 +37,7 @@ func BuildArgs(cfg config.ClaudeConfig, prompt string, debug bool) []string {
 	args := []string{"--print"}
 
 	if debug {
-		args = append(args, "--output-format", "stream-json")
+		args = append(args, "--verbose", "--output-format", "stream-json")
 	}
 
 	if cfg.Model != "" {

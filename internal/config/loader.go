@@ -89,8 +89,8 @@ func applyGlobalDefaults(cfg *Global) {
 	if cfg.RuleExecution.MaxConcurrent == 0 {
 		cfg.RuleExecution.MaxConcurrent = 10
 	}
-	// Memory enabled by default
-	if !cfg.Memory.Enabled && cfg.Memory.Path == "" {
-		cfg.Memory.Enabled = true
+	// Memory: only set default path if enabled and path not set
+	if cfg.Memory.Enabled && cfg.Memory.Path == "" {
+		cfg.Memory.Path = "~/Library/Application Support/srvrmgr/memory.db"
 	}
 }
