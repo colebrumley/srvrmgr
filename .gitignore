@@ -1,6 +1,8 @@
 # Go
 bin/
 *.exe
+/srvrmgr
+/srvrmgrd
 
 # Logs
 *.log
