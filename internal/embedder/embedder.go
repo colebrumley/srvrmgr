@@ -115,6 +115,9 @@ func (e *Embedder) Embed(text string) ([]float32, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(embeddings) == 0 {
+		return nil, fmt.Errorf("no embeddings returned for input")
+	}
 	return embeddings[0], nil
 }
 
@@ -136,13 +139,18 @@ func (e *Embedder) EmbedBatch(texts []string) ([][]float32, error) {
 	return result.Embeddings, nil
 }
 
-// Close releases resources
+// Close releases resources. Safe to call multiple times.
 func (e *Embedder) Close() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	if e.session != nil {
 		e.session.Destroy()
+		e.session = nil
 	}
 	if e.modelDir != "" {
 		os.RemoveAll(e.modelDir)
+		e.modelDir = ""
 	}
 	return nil
 }

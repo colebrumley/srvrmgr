@@ -86,6 +86,14 @@ func (f *Filesystem) Start(ctx context.Context, events chan<- Event) error {
 }
 
 func (f *Filesystem) Stop() error {
+	// Cancel all pending debounce timers to prevent goroutine leaks
+	f.mu.Lock()
+	for path, timer := range f.pending {
+		timer.Stop()
+		delete(f.pending, path)
+	}
+	f.mu.Unlock()
+
 	return f.watcher.Close()
 }
 
@@ -144,7 +152,8 @@ func (f *Filesystem) debounce(path, eventType string, events chan<- Event) {
 }
 
 func (f *Filesystem) sendEvent(path, eventType string, events chan<- Event) {
-	events <- Event{
+	select {
+	case events <- Event{
 		RuleName:  f.ruleName,
 		Type:      eventType,
 		Timestamp: time.Now(),
@@ -152,6 +161,9 @@ func (f *Filesystem) sendEvent(path, eventType string, events chan<- Event) {
 			"file_path": path,
 			"file_name": filepath.Base(path),
 		},
+	}:
+	default:
+		// channel full, drop event
 	}
 }
 

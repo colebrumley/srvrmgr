@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -122,6 +123,9 @@ func (d *DB) Recall(query, category string) ([]Memory, error) {
 	var rows *sql.Rows
 	var err error
 
+	// Escape FTS5 special syntax by wrapping in double quotes
+	escapedQuery := `"` + strings.ReplaceAll(query, `"`, `""`) + `"`
+
 	if category != "" {
 		rows, err = d.db.Query(`
 			SELECT m.id, m.content, m.category, m.rule_name, m.created_at, m.updated_at
@@ -129,7 +133,7 @@ func (d *DB) Recall(query, category string) ([]Memory, error) {
 			JOIN memories_fts fts ON m.id = fts.rowid
 			WHERE memories_fts MATCH ? AND m.category = ?
 			ORDER BY rank
-		`, query, category)
+		`, escapedQuery, category)
 	} else {
 		rows, err = d.db.Query(`
 			SELECT m.id, m.content, m.category, m.rule_name, m.created_at, m.updated_at
@@ -137,7 +141,7 @@ func (d *DB) Recall(query, category string) ([]Memory, error) {
 			JOIN memories_fts fts ON m.id = fts.rowid
 			WHERE memories_fts MATCH ?
 			ORDER BY rank
-		`, query)
+		`, escapedQuery)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("querying memories: %w", err)
@@ -204,8 +208,12 @@ func float32SliceToBytes(floats []float32) []byte {
 	return bytes
 }
 
-// bytesToFloat32Slice converts bytes back to float32 slice
+// bytesToFloat32Slice converts bytes back to float32 slice.
+// Returns nil if the byte length is not a valid multiple of 4.
 func bytesToFloat32Slice(bytes []byte) []float32 {
+	if len(bytes)%4 != 0 {
+		return nil
+	}
 	floats := make([]float32, len(bytes)/4)
 	for i := range floats {
 		bits := uint32(bytes[i*4]) |
@@ -261,6 +269,9 @@ func (d *DB) RecallSemantic(queryEmbedding []float32, category string, limit int
 		}
 
 		embedding := bytesToFloat32Slice(embeddingBytes)
+		if embedding == nil {
+			continue // corrupted embedding data
+		}
 		score := cosineSimilarity(queryEmbedding, embedding)
 
 		results = append(results, MemoryWithScore{Memory: m, Score: score})

@@ -3,6 +3,9 @@ package trigger
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/colebrumley/srvrmgr/internal/config"
@@ -14,6 +17,7 @@ type Scheduled struct {
 	ruleName string
 	cron     *cron.Cron
 	events   chan<- Event
+	mu       sync.Mutex
 }
 
 // NewScheduled creates a new scheduled trigger
@@ -30,12 +34,19 @@ func NewScheduled(ruleName string, cfg config.Trigger) (*Scheduled, error) {
 	cronExpr := cfg.CronExpression
 	if cronExpr == "" {
 		// Convert simple syntax to cron
-		cronExpr = convertSimpleToCron(cfg.RunEvery, cfg.RunAt)
+		var err error
+		cronExpr, err = convertSimpleToCron(cfg.RunEvery, cfg.RunAt)
+		if err != nil {
+			return nil, fmt.Errorf("invalid schedule: %w", err)
+		}
 	}
 
 	_, err := c.AddFunc(cronExpr, func() {
-		if s.events != nil {
-			s.events <- Event{
+		s.mu.Lock()
+		events := s.events
+		s.mu.Unlock()
+		if events != nil {
+			events <- Event{
 				RuleName:  s.ruleName,
 				Type:      "scheduled",
 				Timestamp: time.Now(),
@@ -55,7 +66,9 @@ func (s *Scheduled) RuleName() string {
 }
 
 func (s *Scheduled) Start(ctx context.Context, events chan<- Event) error {
+	s.mu.Lock()
 	s.events = events
+	s.mu.Unlock()
 	s.cron.Start()
 
 	<-ctx.Done()
@@ -63,41 +76,55 @@ func (s *Scheduled) Start(ctx context.Context, events chan<- Event) error {
 }
 
 func (s *Scheduled) Stop() error {
-	s.cron.Stop()
+	ctx := s.cron.Stop()
+	<-ctx.Done() // wait for running jobs to finish
 	return nil
 }
 
-// convertSimpleToCron converts run_every or run_at to cron expression
-func convertSimpleToCron(runEvery, runAt string) string {
+// convertSimpleToCron converts run_every or run_at to cron expression.
+// Returns an error if the input is invalid.
+func convertSimpleToCron(runEvery, runAt string) (string, error) {
 	// Default: every hour
 	if runEvery == "" && runAt == "" {
-		return "0 0 * * * *"
+		return "0 0 * * * *", nil
 	}
 
 	// run_at: "HH:MM" -> run daily at that time
 	if runAt != "" {
-		// Parse "HH:MM" format
-		if len(runAt) == 5 && runAt[2] == ':' {
-			hour := runAt[0:2]
-			min := runAt[3:5]
-			return "0 " + min + " " + hour + " * * *"
+		if len(runAt) != 5 || runAt[2] != ':' {
+			return "", fmt.Errorf("invalid run_at format %q, expected HH:MM", runAt)
 		}
+		hour, err := strconv.Atoi(runAt[0:2])
+		if err != nil || hour < 0 || hour > 23 {
+			return "", fmt.Errorf("invalid hour in run_at %q", runAt)
+		}
+		min, err := strconv.Atoi(runAt[3:5])
+		if err != nil || min < 0 || min > 59 {
+			return "", fmt.Errorf("invalid minute in run_at %q", runAt)
+		}
+		return fmt.Sprintf("0 %d %d * * *", min, hour), nil
 	}
 
 	// run_every: "1h", "30m", "6h", etc.
 	if runEvery != "" {
-		if len(runEvery) >= 2 {
-			unit := runEvery[len(runEvery)-1]
-			val := runEvery[:len(runEvery)-1]
+		if len(runEvery) < 2 {
+			return "", fmt.Errorf("invalid run_every format %q", runEvery)
+		}
+		unit := runEvery[len(runEvery)-1]
+		val, err := strconv.Atoi(runEvery[:len(runEvery)-1])
+		if err != nil || val <= 0 {
+			return "", fmt.Errorf("invalid run_every value %q, must be a positive integer", runEvery)
+		}
 
-			switch unit {
-			case 'h':
-				return "0 0 */" + val + " * * *"
-			case 'm':
-				return "0 */" + val + " * * * *"
-			}
+		switch unit {
+		case 'h':
+			return fmt.Sprintf("0 0 */%d * * *", val), nil
+		case 'm':
+			return fmt.Sprintf("0 */%d * * * *", val), nil
+		default:
+			return "", fmt.Errorf("invalid run_every unit %q, expected 'h' or 'm'", string(unit))
 		}
 	}
 
-	return "0 0 * * * *"
+	return "0 0 * * * *", nil
 }

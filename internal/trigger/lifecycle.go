@@ -45,15 +45,20 @@ func (l *Lifecycle) ShouldFireOn(eventType string) bool {
 	return l.onEvents[eventType]
 }
 
-// Fire sends a lifecycle event
-func (l *Lifecycle) Fire(eventType string, events chan<- Event) {
+// Fire sends a lifecycle event. Returns false if the channel is full.
+func (l *Lifecycle) Fire(eventType string, events chan<- Event) bool {
 	if !l.ShouldFireOn(eventType) {
-		return
+		return false
 	}
-	events <- Event{
+	select {
+	case events <- Event{
 		RuleName:  l.ruleName,
 		Type:      eventType,
 		Timestamp: time.Now(),
 		Data:      map[string]any{},
+	}:
+		return true
+	default:
+		return false // channel full, avoid blocking
 	}
 }

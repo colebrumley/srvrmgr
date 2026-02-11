@@ -13,17 +13,15 @@ import (
 	"github.com/colebrumley/srvrmgr/internal/config"
 )
 
-// MCPServerConfig represents an MCP server configuration (stdio)
-type MCPServerConfig struct {
-	Command string   `json:"command,omitempty"`
-	Args    []string `json:"args,omitempty"`
-	Type    string   `json:"type,omitempty"`
-	URL     string   `json:"url,omitempty"`
-}
-
 // MCPConfig represents the MCP configuration file format
 type MCPConfig struct {
 	MCPServers map[string]MCPServerConfig `json:"mcpServers"`
+}
+
+// MCPServerConfig represents a single MCP server configuration
+type MCPServerConfig struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
 }
 
 // Result represents the outcome of a Claude Code execution
@@ -148,11 +146,19 @@ func ExecuteWithMemory(ctx context.Context, prompt string, cfg config.ClaudeConf
 	duration := time.Since(start)
 
 	if err != nil {
-		// Check if it was a context cancellation (timeout)
+		// Check if it was a context cancellation (timeout or shutdown)
 		if ctx.Err() == context.DeadlineExceeded {
 			return &Result{
 				State:    "timeout",
 				Error:    "execution timed out",
+				Output:   string(output),
+				Duration: duration,
+			}, nil
+		}
+		if ctx.Err() == context.Canceled {
+			return &Result{
+				State:    "cancelled",
+				Error:    "execution cancelled",
 				Output:   string(output),
 				Duration: duration,
 			}, nil

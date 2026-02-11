@@ -32,12 +32,17 @@ func (m *Manual) Stop() error {
 	return nil
 }
 
-// Fire manually triggers this rule
-func (m *Manual) Fire(events chan<- Event, data map[string]any) {
-	events <- Event{
+// Fire manually triggers this rule. Returns false if the channel is full.
+func (m *Manual) Fire(events chan<- Event, data map[string]any) bool {
+	select {
+	case events <- Event{
 		RuleName:  m.ruleName,
 		Type:      "manual",
 		Timestamp: time.Now(),
 		Data:      data,
+	}:
+		return true
+	default:
+		return false
 	}
 }

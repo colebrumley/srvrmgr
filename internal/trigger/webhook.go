@@ -3,6 +3,7 @@ package trigger
 
 import (
 	"context"
+	"crypto/subtle"
 	"io"
 	"net/http"
 	"os"
@@ -70,15 +71,18 @@ func (w *Webhook) HandleRequest(r *http.Request, events chan<- Event) bool {
 	}
 
 	// Check secret if required
-	if w.requireSecret && w.secret != "" {
+	if w.requireSecret {
+		if w.secret == "" {
+			return false // secret env var not set, reject all requests
+		}
 		headerVal := r.Header.Get(w.secretHeader)
-		if headerVal != w.secret {
+		if subtle.ConstantTimeCompare([]byte(headerVal), []byte(w.secret)) != 1 {
 			return false
 		}
 	}
 
-	// Read body
-	body, _ := io.ReadAll(r.Body)
+	// Read body (limit to 1MB to prevent OOM)
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 
 	// Build headers map
 	headers := make(map[string]string)
@@ -88,7 +92,8 @@ func (w *Webhook) HandleRequest(r *http.Request, events chan<- Event) bool {
 		}
 	}
 
-	events <- Event{
+	select {
+	case events <- Event{
 		RuleName:  w.ruleName,
 		Type:      "webhook",
 		Timestamp: time.Now(),
@@ -98,7 +103,9 @@ func (w *Webhook) HandleRequest(r *http.Request, events chan<- Event) bool {
 			"http_method":  r.Method,
 			"http_path":    r.URL.Path,
 		},
+	}:
+		return true
+	default:
+		return false // event channel full
 	}
-
-	return true
 }

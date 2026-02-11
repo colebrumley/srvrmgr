@@ -3,6 +3,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -142,6 +143,9 @@ func (s *Server) handleRecall(ctx context.Context, req *mcp.CallToolRequest, inp
 			return nil, RecallOutput{}, fmt.Errorf("failed to search memories: %w", err)
 		}
 		for _, m := range memories {
+			if len(results) >= limit {
+				break
+			}
 			results = append(results, MemoryResult{
 				ID:       m.ID,
 				Content:  m.Content,
@@ -178,7 +182,7 @@ func (s *Server) handleRecall(ctx context.Context, req *mcp.CallToolRequest, inp
 func (s *Server) handleForget(ctx context.Context, req *mcp.CallToolRequest, input ForgetInput) (*mcp.CallToolResult, ForgetOutput, error) {
 	err := s.db.Forget(input.ID)
 	if err != nil {
-		if err == memory.ErrNotFound {
+		if errors.Is(err, memory.ErrNotFound) {
 			return nil, ForgetOutput{}, fmt.Errorf("memory with ID %d not found", input.ID)
 		}
 		return nil, ForgetOutput{}, fmt.Errorf("failed to delete memory: %w", err)

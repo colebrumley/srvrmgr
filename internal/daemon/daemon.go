@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +32,8 @@ type Daemon struct {
 	httpServer *http.Server
 	daemonPath string // Path to daemon executable for MCP stdio transport
 	mu         sync.RWMutex
+	sem        chan struct{} // concurrency limiter
+	wg         sync.WaitGroup // tracks in-flight event handlers
 }
 
 // New creates a new daemon instance
@@ -90,14 +94,29 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	d.logger.Info("daemon started", "rules_loaded", len(d.rules))
 
+	// Initialize concurrency limiter
+	d.sem = make(chan struct{}, d.config.RuleExecution.MaxConcurrent)
+
 	// Main event loop
 	for {
 		select {
 		case event := <-d.events:
-			go d.handleEvent(ctx, event)
+			d.sem <- struct{}{} // acquire semaphore
+			d.wg.Add(1)
+			go func() {
+				defer func() {
+					<-d.sem // release semaphore
+					d.wg.Done()
+				}()
+				d.handleEvent(ctx, event)
+			}()
 		case <-ctx.Done():
-			d.fireLifecycleEvent("daemon_stopped")
-			d.logger.Info("daemon stopping")
+			d.logger.Info("daemon stopping, waiting for in-flight handlers")
+			d.wg.Wait() // wait for in-flight handlers to finish
+			// Use a fresh context for shutdown lifecycle events since parent is cancelled
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			d.handleLifecycleShutdown(shutdownCtx)
+			shutdownCancel()
 			return d.shutdown()
 		}
 	}
@@ -129,8 +148,8 @@ func (d *Daemon) loadRules() error {
 }
 
 func (d *Daemon) initTriggers(ctx context.Context) error {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
+	d.mu.Lock()
+	defer d.mu.Unlock()
 
 	for _, rule := range d.rules {
 		if !rule.Enabled {
@@ -198,7 +217,9 @@ func (d *Daemon) startWebhookServer(ctx context.Context) {
 	}()
 
 	<-ctx.Done()
-	d.httpServer.Shutdown(context.Background())
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	d.httpServer.Shutdown(shutdownCtx)
 }
 
 func (d *Daemon) fireLifecycleEvent(eventType string) {
@@ -209,6 +230,29 @@ func (d *Daemon) fireLifecycleEvent(eventType string) {
 		if lt, ok := t.(*trigger.Lifecycle); ok {
 			lt.Fire(eventType, d.events)
 		}
+	}
+}
+
+// handleLifecycleShutdown directly handles daemon_stopped events with the given context,
+// bypassing the event channel which is no longer being read after ctx cancellation.
+func (d *Daemon) handleLifecycleShutdown(ctx context.Context) {
+	d.mu.RLock()
+	var lifecycleRules []string
+	for _, t := range d.triggers {
+		if lt, ok := t.(*trigger.Lifecycle); ok && lt.ShouldFireOn("daemon_stopped") {
+			lifecycleRules = append(lifecycleRules, lt.RuleName())
+		}
+	}
+	d.mu.RUnlock()
+
+	for _, ruleName := range lifecycleRules {
+		event := trigger.Event{
+			RuleName:  ruleName,
+			Type:      "daemon_stopped",
+			Timestamp: time.Now(),
+			Data:      map[string]any{},
+		}
+		d.handleEvent(ctx, event)
 	}
 }
 
@@ -236,10 +280,10 @@ func (d *Daemon) handleEvent(ctx context.Context, event trigger.Event) {
 		claudeCfg.PermissionMode = "plan"
 	}
 
-	// Determine working directory
+	// Determine working directory (expand ~ if present)
 	workDir := ""
 	if len(claudeCfg.AddDirs) > 0 {
-		workDir = claudeCfg.AddDirs[0]
+		workDir = expandHome(claudeCfg.AddDirs[0])
 	}
 
 	// Execute with timeout
@@ -260,9 +304,12 @@ func (d *Daemon) handleEvent(ctx context.Context, event trigger.Event) {
 		"duration", result.Duration,
 	)
 
-	if result.State == "success" {
+	switch result.State {
+	case "success":
 		d.fireTriggeredRules(ctx, rule, event)
-	} else {
+	case "cancelled":
+		logger.Info("execution cancelled (shutdown)")
+	default:
 		d.handleFailure(ctx, rule, event, fmt.Errorf("execution failed: %s", result.Error))
 	}
 }
@@ -298,11 +345,15 @@ func (d *Daemon) handleFailure(ctx context.Context, rule *config.Rule, event tri
 
 func (d *Daemon) fireTriggeredRules(ctx context.Context, rule *config.Rule, event trigger.Event) {
 	for _, triggerName := range rule.Triggers {
-		d.events <- trigger.Event{
+		select {
+		case d.events <- trigger.Event{
 			RuleName:  triggerName,
 			Type:      "triggered",
 			Timestamp: time.Now(),
 			Data:      event.Data,
+		}:
+		default:
+			d.logger.Warn("event channel full, dropping triggered rule", "rule", triggerName)
 		}
 	}
 }
@@ -336,6 +387,13 @@ func (d *Daemon) RunRule(ctx context.Context, ruleName string, data map[string]a
 
 	d.logger = logging.NewLogger(d.config.Logging.Format, d.config.Daemon.LogLevel, os.Stdout)
 
+	// Set daemon path for memory MCP injection
+	if d.config.Memory.Enabled {
+		if daemonPath, err := os.Executable(); err == nil {
+			d.daemonPath = daemonPath
+		}
+	}
+
 	if err := d.loadRules(); err != nil {
 		return err
 	}
@@ -354,4 +412,13 @@ func (d *Daemon) RunRule(ctx context.Context, ruleName string, data map[string]a
 
 	d.handleEvent(ctx, event)
 	return nil
+}
+
+func expandHome(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
 }

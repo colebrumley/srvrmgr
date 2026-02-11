@@ -86,11 +86,13 @@ func applyGlobalDefaults(cfg *Global) {
 	if cfg.Logging.Format == "" {
 		cfg.Logging.Format = "json"
 	}
-	if cfg.RuleExecution.MaxConcurrent == 0 {
+	if cfg.RuleExecution.MaxConcurrent <= 0 {
 		cfg.RuleExecution.MaxConcurrent = 10
 	}
 	// Memory: only set default path if enabled and path not set
 	if cfg.Memory.Enabled && cfg.Memory.Path == "" {
-		cfg.Memory.Path = "~/Library/Application Support/srvrmgr/memory.db"
+		if homeDir, err := os.UserHomeDir(); err == nil {
+			cfg.Memory.Path = filepath.Join(homeDir, "Library", "Application Support", "srvrmgr", "memory.db")
+		}
 	}
 }
