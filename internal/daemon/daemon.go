@@ -21,30 +21,32 @@ import (
 
 // Daemon is the main server manager daemon
 type Daemon struct {
-	configPath string
-	rulesDir   string
-	config     *config.Global
-	rules      map[string]*config.Rule
-	triggers   map[string]trigger.Trigger
-	events     chan trigger.Event
-	logger     *slog.Logger
-	webhooks   map[string]*trigger.Webhook
-	httpServer *http.Server
-	daemonPath string // Path to daemon executable for MCP stdio transport
-	mu         sync.RWMutex
-	sem        chan struct{} // concurrency limiter
-	wg         sync.WaitGroup // tracks in-flight event handlers
+	configPath   string
+	rulesDir     string
+	config       *config.Global
+	rules        map[string]*config.Rule
+	triggers     map[string]trigger.Trigger
+	events       chan trigger.Event
+	logger       *slog.Logger
+	webhooks     map[string]*trigger.Webhook
+	httpServer   *http.Server
+	daemonPath   string // Path to daemon executable for MCP stdio transport
+	lastRunState map[string]string // tracks last execution state per rule name
+	mu           sync.RWMutex
+	sem          chan struct{}     // concurrency limiter
+	wg           sync.WaitGroup   // tracks in-flight event handlers
 }
 
 // New creates a new daemon instance
 func New(configPath, rulesDir string) *Daemon {
 	return &Daemon{
-		configPath: configPath,
-		rulesDir:   rulesDir,
-		rules:      make(map[string]*config.Rule),
-		triggers:   make(map[string]trigger.Trigger),
-		events:     make(chan trigger.Event, 100),
-		webhooks:   make(map[string]*trigger.Webhook),
+		configPath:   configPath,
+		rulesDir:     rulesDir,
+		rules:        make(map[string]*config.Rule),
+		triggers:     make(map[string]trigger.Trigger),
+		events:       make(chan trigger.Event, 100),
+		webhooks:     make(map[string]*trigger.Webhook),
+		lastRunState: make(map[string]string),
 	}
 }
 
@@ -269,30 +271,14 @@ func (d *Daemon) handleEvent(ctx context.Context, event trigger.Event) {
 	logger := logging.WithRule(d.logger, rule.Name)
 	logger.Info("handling event", "type", event.Type)
 
-	// Build prompt from template
-	prompt := template.Expand(rule.Action.Prompt, event.Data)
-
-	// Merge rule claude config with defaults
-	claudeCfg := d.mergeClaudeConfig(rule.Claude)
-
-	// Handle dry_run
-	if rule.DryRun {
-		claudeCfg.PermissionMode = "plan"
+	// Check dependencies before execution
+	if !d.checkDependencies(rule) {
+		logger.Warn("skipping rule, dependencies not met", "depends_on", rule.DependsOn)
+		return
 	}
 
-	// Determine working directory (expand ~ if present)
-	workDir := ""
-	if len(claudeCfg.AddDirs) > 0 {
-		workDir = expandHome(claudeCfg.AddDirs[0])
-	}
-
-	// Execute with timeout
-	timeout := 5 * time.Minute // Default timeout
-	execCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	memoryEnabled := d.isMemoryEnabled(rule)
-	result, err := executor.ExecuteWithMemory(execCtx, prompt, claudeCfg, rule.RunAsUser, d.config.Logging.Debug, workDir, memoryEnabled, d.daemonPath)
+	// Execute rule
+	result, err := d.executeRule(ctx, rule, event)
 	if err != nil {
 		logger.Error("execution error", "error", err)
 		d.handleFailure(ctx, rule, event, err)
@@ -304,6 +290,9 @@ func (d *Daemon) handleEvent(ctx context.Context, event trigger.Event) {
 		"duration", result.Duration,
 	)
 
+	// Track execution state
+	d.recordExecutionState(rule.Name, result.State)
+
 	switch result.State {
 	case "success":
 		d.fireTriggeredRules(ctx, rule, event)
@@ -312,6 +301,28 @@ func (d *Daemon) handleEvent(ctx context.Context, event trigger.Event) {
 	default:
 		d.handleFailure(ctx, rule, event, fmt.Errorf("execution failed: %s", result.Error))
 	}
+}
+
+// executeRule performs the actual rule execution (template expand, config merge, Claude call)
+func (d *Daemon) executeRule(ctx context.Context, rule *config.Rule, event trigger.Event) (*executor.Result, error) {
+	prompt := template.Expand(rule.Action.Prompt, event.Data)
+	claudeCfg := d.mergeClaudeConfig(rule.Claude)
+
+	if rule.DryRun {
+		claudeCfg.PermissionMode = "plan"
+	}
+
+	workDir := ""
+	if len(claudeCfg.AddDirs) > 0 {
+		workDir = expandHome(claudeCfg.AddDirs[0])
+	}
+
+	timeout := 5 * time.Minute
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	memoryEnabled := d.isMemoryEnabled(rule)
+	return executor.ExecuteWithMemory(execCtx, prompt, claudeCfg, rule.RunAsUser, d.config.Logging.Debug, workDir, memoryEnabled, d.daemonPath)
 }
 
 func (d *Daemon) mergeClaudeConfig(ruleCfg config.ClaudeConfig) config.ClaudeConfig {
@@ -339,8 +350,84 @@ func (d *Daemon) handleFailure(ctx context.Context, rule *config.Rule, event tri
 		return
 	}
 
-	// TODO: Implement retry logic
-	logger.Warn("rule failed, retry not yet implemented", "error", err)
+	maxAttempts := rule.OnFailure.RetryAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	delay := time.Duration(rule.OnFailure.RetryDelaySeconds) * time.Second
+	if delay <= 0 {
+		delay = 30 * time.Second
+	}
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		logger.Warn("retrying rule execution",
+			"attempt", attempt,
+			"max_attempts", maxAttempts,
+			"delay", delay,
+			"previous_error", err,
+		)
+
+		// Wait before retry, respecting context cancellation
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			logger.Info("retry cancelled (shutdown)", "attempt", attempt)
+			return
+		}
+
+		// Re-execute the rule
+		result, execErr := d.executeRule(ctx, rule, event)
+		if execErr != nil {
+			err = execErr
+			continue
+		}
+		if result.State == "success" {
+			logger.Info("retry succeeded", "attempt", attempt)
+			d.recordExecutionState(rule.Name, "success")
+			d.fireTriggeredRules(ctx, rule, event)
+			return
+		}
+		if result.State == "cancelled" {
+			logger.Info("retry cancelled (shutdown)", "attempt", attempt)
+			return
+		}
+		err = fmt.Errorf("execution failed: %s", result.Error)
+	}
+
+	logger.Error("rule failed after all retries",
+		"attempts", maxAttempts,
+		"last_error", err,
+	)
+	d.recordExecutionState(rule.Name, "failure")
+}
+
+// recordExecutionState tracks the last execution state for a rule.
+func (d *Daemon) recordExecutionState(ruleName, state string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.lastRunState[ruleName] = state
+}
+
+// checkDependencies checks if all depends_on_rules have completed successfully.
+// Returns true if there are no dependencies or all dependencies have succeeded.
+func (d *Daemon) checkDependencies(rule *config.Rule) bool {
+	if len(rule.DependsOn) == 0 {
+		return true
+	}
+
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	for _, dep := range rule.DependsOn {
+		state, ok := d.lastRunState[dep]
+		if !ok {
+			return false // dependency hasn't run yet
+		}
+		if state != "success" {
+			return false // dependency didn't succeed
+		}
+	}
+	return true
 }
 
 func (d *Daemon) fireTriggeredRules(ctx context.Context, rule *config.Rule, event trigger.Event) {

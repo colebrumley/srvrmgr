@@ -158,8 +158,9 @@ func (f *Filesystem) sendEvent(path, eventType string, events chan<- Event) {
 		Type:      eventType,
 		Timestamp: time.Now(),
 		Data: map[string]any{
-			"file_path": path,
-			"file_name": filepath.Base(path),
+			"file_path":  path,
+			"file_name":  filepath.Base(path),
+			"event_type": eventType,
 		},
 	}:
 	default:

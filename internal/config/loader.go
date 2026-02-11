@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -37,7 +38,63 @@ func LoadRule(path string) (*Rule, error) {
 		return nil, fmt.Errorf("parsing rule file: %w", err)
 	}
 
+	if err := ValidateRule(&rule); err != nil {
+		return nil, fmt.Errorf("validating rule in %s: %w", filepath.Base(path), err)
+	}
+
 	return &rule, nil
+}
+
+// ValidateRule checks that a rule has all required fields and valid configuration.
+func ValidateRule(rule *Rule) error {
+	if rule.Name == "" {
+		return fmt.Errorf("rule name is required")
+	}
+	if rule.Trigger.Type == "" {
+		return fmt.Errorf("trigger type is required")
+	}
+	if rule.Action.Prompt == "" {
+		return fmt.Errorf("action prompt is required")
+	}
+
+	validTypes := map[string]bool{
+		"filesystem": true,
+		"scheduled":  true,
+		"webhook":    true,
+		"lifecycle":  true,
+		"manual":     true,
+	}
+	if !validTypes[rule.Trigger.Type] {
+		return fmt.Errorf("invalid trigger type %q: must be one of filesystem, scheduled, webhook, lifecycle, manual", rule.Trigger.Type)
+	}
+
+	switch rule.Trigger.Type {
+	case "filesystem":
+		if len(rule.Trigger.WatchPaths) == 0 {
+			return fmt.Errorf("filesystem trigger requires at least one watch_paths entry")
+		}
+	case "scheduled":
+		if rule.Trigger.CronExpression == "" && rule.Trigger.RunEvery == "" && rule.Trigger.RunAt == "" {
+			return fmt.Errorf("scheduled trigger requires at least one of cron_expression, run_every, or run_at")
+		}
+	case "webhook":
+		if rule.Trigger.ListenPath == "" {
+			return fmt.Errorf("webhook trigger requires listen_path")
+		}
+		if !strings.HasPrefix(rule.Trigger.ListenPath, "/") {
+			return fmt.Errorf("webhook listen_path must start with \"/\"")
+		}
+	case "lifecycle":
+		if len(rule.Trigger.OnEvents) == 0 {
+			return fmt.Errorf("lifecycle trigger requires at least one on_events entry")
+		}
+	}
+
+	if rule.OnFailure.Retry && rule.OnFailure.RetryAttempts <= 0 {
+		rule.OnFailure.RetryAttempts = 3
+	}
+
+	return nil
 }
 
 // LoadRulesDir loads all rules from a directory

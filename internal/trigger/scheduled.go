@@ -46,11 +46,14 @@ func NewScheduled(ruleName string, cfg config.Trigger) (*Scheduled, error) {
 		events := s.events
 		s.mu.Unlock()
 		if events != nil {
+			now := time.Now()
 			events <- Event{
 				RuleName:  s.ruleName,
 				Type:      "scheduled",
-				Timestamp: time.Now(),
-				Data:      map[string]any{},
+				Timestamp: now,
+				Data: map[string]any{
+					"timestamp": now.Format(time.RFC3339),
+				},
 			}
 		}
 	})
