@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,10 +95,69 @@ func ValidateRule(rule *Rule) error {
 		rule.OnFailure.RetryAttempts = 3
 	}
 
+	// FR-3: Validate max_timeout_seconds range
+	if rule.MaxTimeoutSeconds < 0 {
+		return fmt.Errorf("max_timeout_seconds must be >= 0, got %d", rule.MaxTimeoutSeconds)
+	}
+	if rule.MaxTimeoutSeconds > 3600 {
+		return fmt.Errorf("max_timeout_seconds must be <= 3600 (1 hour), got %d", rule.MaxTimeoutSeconds)
+	}
+
+	// FR-15: Reject run_as_user: root
+	if rule.RunAsUser == "root" {
+		return fmt.Errorf("run_as_user cannot be \"root\" — rules must never run as root")
+	}
+
+	// FR-15: Reject bypassPermissions mode
+	if rule.Claude.PermissionMode == "bypassPermissions" {
+		return fmt.Errorf("permission_mode \"bypassPermissions\" is not allowed for daemon rules")
+	}
+
 	return nil
 }
 
-// LoadRulesDir loads all rules from a directory
+// ValidateRuleWithGlobal performs additional validation that requires global config context.
+// FR-15: Checks run_as_user against the allowed_run_as_users allowlist.
+// FR-19: Warns about triggers_rules / depends_on overlap.
+// Sourced from architect — clean separation of global-context validation.
+func ValidateRuleWithGlobal(rule *Rule, global *Global, allRules map[string]*Rule) []string {
+	var warnings []string
+
+	// FR-15: Validate run_as_user against allowlist
+	if rule.RunAsUser != "" && len(global.Daemon.AllowedRunAsUsers) > 0 {
+		allowed := false
+		for _, u := range global.Daemon.AllowedRunAsUsers {
+			if u == rule.RunAsUser {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			warnings = append(warnings, fmt.Sprintf("rule %q: run_as_user %q is not in allowed_run_as_users list", rule.Name, rule.RunAsUser))
+		}
+	}
+
+	// FR-19: Warn about triggers_rules / depends_on overlap
+	if len(rule.DependsOn) > 0 && allRules != nil {
+		for _, dep := range rule.DependsOn {
+			if parentRule, ok := allRules[dep]; ok {
+				for _, triggered := range parentRule.Triggers {
+					if triggered == rule.Name {
+						warnings = append(warnings, fmt.Sprintf(
+							"rule %q has depends_on_rules: [%s] which also has triggers_rules: [%s] — this is redundant; triggers_rules already implies 'fire on success'",
+							rule.Name, dep, rule.Name,
+						))
+					}
+				}
+			}
+		}
+	}
+
+	return warnings
+}
+
+// LoadRulesDir loads all rules from a directory.
+// FR-8: Invalid rules are logged via slog and skipped; valid rules are still returned.
 func LoadRulesDir(dir string) ([]*Rule, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -116,7 +176,9 @@ func LoadRulesDir(dir string) ([]*Rule, error) {
 
 		rule, err := LoadRule(filepath.Join(dir, entry.Name()))
 		if err != nil {
-			return nil, fmt.Errorf("loading rule %s: %w", entry.Name(), err)
+			// FR-8: Use slog for warnings about invalid rules (not log.Printf or fmt.Fprintf)
+			slog.Warn("skipping invalid rule", "file", entry.Name(), "error", err)
+			continue
 		}
 		rules = append(rules, rule)
 	}

@@ -11,22 +11,24 @@ type Global struct {
 }
 
 type DaemonConfig struct {
-	LogLevel             string `yaml:"log_level"`
-	WebhookListenPort    int    `yaml:"webhook_listen_port"`
-	WebhookListenAddress string `yaml:"webhook_listen_address"`
+	LogLevel             string   `yaml:"log_level"`
+	WebhookListenPort    int      `yaml:"webhook_listen_port"`
+	WebhookListenAddress string   `yaml:"webhook_listen_address"`
+	AllowedRunAsUsers    []string `yaml:"allowed_run_as_users"` // FR-15: allowlist for run_as_user
 }
 
 type ClaudeConfig struct {
-	Model              string   `yaml:"model"`
-	AllowedTools       []string `yaml:"allowed_tools"`
-	DisallowedTools    []string `yaml:"disallowed_tools"`
-	AddDirs            []string `yaml:"add_dirs"`
-	PermissionMode     string   `yaml:"permission_mode"`
-	MaxBudgetUSD       float64  `yaml:"max_budget_usd"`
-	SystemPrompt       string   `yaml:"system_prompt"`
-	AppendSystemPrompt string   `yaml:"append_system_prompt"`
-	MCPConfig          []string `yaml:"mcp_config"`
-	Memory             *bool    `yaml:"memory"` // nil = inherit, true = enable, false = disable
+	Model              string            `yaml:"model"`
+	AllowedTools       []string          `yaml:"allowed_tools"`
+	DisallowedTools    []string          `yaml:"disallowed_tools"`
+	AddDirs            []string          `yaml:"add_dirs"`
+	PermissionMode     string            `yaml:"permission_mode"`
+	MaxBudgetUSD       float64           `yaml:"max_budget_usd"`
+	SystemPrompt       string            `yaml:"system_prompt"`
+	AppendSystemPrompt string            `yaml:"append_system_prompt"`
+	MCPConfig          []string          `yaml:"mcp_config"`
+	Memory             *bool             `yaml:"memory"`   // nil = inherit, true = enable, false = disable
+	EnvVars            map[string]string `yaml:"env_vars"` // FR-18: environment variables for subprocess
 }
 
 type LoggingConfig struct {
@@ -45,17 +47,19 @@ type MemoryConfig struct {
 
 // Rule configuration loaded from individual YAML files
 type Rule struct {
-	Name        string       `yaml:"name"`
-	Description string       `yaml:"description"`
-	Enabled     bool         `yaml:"enabled"`
-	RunAsUser   string       `yaml:"run_as_user"`
-	Trigger     Trigger      `yaml:"trigger"`
-	Action      Action       `yaml:"action"`
-	Claude      ClaudeConfig `yaml:"claude"`
-	DryRun      bool         `yaml:"dry_run"`
-	DependsOn   []string     `yaml:"depends_on_rules"`
-	Triggers    []string     `yaml:"triggers_rules"`
-	OnFailure   OnFailure    `yaml:"on_failure"`
+	Name              string       `yaml:"name"`
+	Description       string       `yaml:"description"`
+	Enabled           bool         `yaml:"enabled"`
+	RunAsUser         string       `yaml:"run_as_user"`
+	Trigger           Trigger      `yaml:"trigger"`
+	Action            Action       `yaml:"action"`
+	Claude            ClaudeConfig `yaml:"claude"`
+	DryRun            bool         `yaml:"dry_run"`
+	DependsOn         []string     `yaml:"depends_on_rules"`
+	Triggers          []string     `yaml:"triggers_rules"`
+	OnFailure         OnFailure    `yaml:"on_failure"`
+	MaxTimeoutSeconds int          `yaml:"max_timeout_seconds"` // FR-3: per-rule timeout (default 300)
+	MaxActions        int          `yaml:"max_actions"`         // FR-17: max tool calls per execution (default 50)
 }
 
 type Trigger struct {

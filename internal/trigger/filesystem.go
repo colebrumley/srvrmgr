@@ -4,6 +4,7 @@ package trigger
 import (
 	"context"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -26,7 +27,9 @@ type Filesystem struct {
 }
 
 // NewFilesystem creates a new filesystem trigger
-func NewFilesystem(ruleName string, cfg config.Trigger) (*Filesystem, error) {
+// FR-12: runAsUser is used to resolve ~ in watch_paths to the correct user's home.
+// Sourced from convention — 3-param signature avoids dual-function pattern.
+func NewFilesystem(ruleName string, cfg config.Trigger, runAsUser string) (*Filesystem, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -37,10 +40,10 @@ func NewFilesystem(ruleName string, cfg config.Trigger) (*Filesystem, error) {
 		onEvents[e] = true
 	}
 
-	// Expand ~ in paths
+	// FR-12: Expand ~ in paths using run_as_user's home directory
 	var watchPaths []string
 	for _, p := range cfg.WatchPaths {
-		watchPaths = append(watchPaths, expandHome(p))
+		watchPaths = append(watchPaths, expandHomeForUser(p, runAsUser))
 	}
 
 	return &Filesystem{
@@ -102,7 +105,13 @@ func (f *Filesystem) handleEvent(fsEvent fsnotify.Event, events chan<- Event) {
 	var eventType string
 	switch {
 	case fsEvent.Op&fsnotify.Create != 0:
-		eventType = "file_created"
+		// FR-11: Distinguish directory_created from file_created.
+		// Sourced from convention.
+		if info, err := os.Stat(fsEvent.Name); err == nil && info.IsDir() {
+			eventType = "directory_created"
+		} else {
+			eventType = "file_created"
+		}
 	case fsEvent.Op&fsnotify.Write != 0:
 		eventType = "file_modified"
 	case fsEvent.Op&fsnotify.Remove != 0:
@@ -168,13 +177,28 @@ func (f *Filesystem) sendEvent(path, eventType string, events chan<- Event) {
 	}
 }
 
-func expandHome(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return path
-		}
-		return filepath.Join(home, path[2:])
+// FR-12: expandHomeForUser resolves ~ to the specified user's home directory.
+// Sourced from convention — single function with username fallback.
+func expandHomeForUser(path, username string) string {
+	if !strings.HasPrefix(path, "~/") {
+		return path
 	}
-	return path
+
+	if username != "" {
+		u, err := user.Lookup(username)
+		if err == nil {
+			return filepath.Join(u.HomeDir, path[2:])
+		}
+	}
+
+	// Fallback to current user's home
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	return filepath.Join(home, path[2:])
+}
+
+func expandHome(path string) string {
+	return expandHomeForUser(path, "")
 }

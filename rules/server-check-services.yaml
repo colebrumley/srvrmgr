@@ -1,0 +1,75 @@
+name: server-check-services
+description: >-
+  Check status of Homebrew-managed services every 15 minutes.
+  Restart any crashed services and log issues.
+enabled: true
+run_as_user: cole
+dry_run: true
+
+trigger:
+  type: scheduled
+  run_every: "15m"
+
+action:
+  prompt: |
+    Check Homebrew service health and restart crashed services.
+
+    Timestamp: {{timestamp}}
+
+    STEP 1 — Get service status:
+    Run: brew services list
+    Parse the output to identify each service and its status.
+
+    STEP 2 — Check critical services:
+    Expected services (check each):
+    - plex (or plex-media-server)
+    - jellyfin (if installed)
+    - Any other services shown in `brew services list`
+
+    For each service, check:
+    - Is it running? (status = "started")
+    - Is the PID valid? (process still exists: `kill -0 <pid> 2>/dev/null`)
+
+    STEP 3 — Restart stopped services:
+    If a service that should be running is stopped/errored:
+    - Run: brew services restart <service>
+    - Wait 5 seconds
+    - Verify it's running: brew services list | grep <service>
+    - If still not running, log as critical failure
+
+    STEP 4 — Report:
+    - List all services with current status
+    - Note any services that were restarted
+    - Flag any services that failed to restart
+
+    Use recall for previous service status.
+    Use remember to store current status and any restart events.
+
+claude:
+  model: haiku
+  allowed_tools:
+    - Bash
+  disallowed_tools:
+    - WebFetch
+    - WebSearch
+    - Write
+    - Edit
+    - Read
+    - Glob
+    - Grep
+  permission_mode: default
+  max_budget_usd: 0.10
+  memory: true
+  append_system_prompt: |
+    SAFETY: Only use `brew services` commands for service management.
+    Do NOT use launchctl directly. Do NOT modify any configuration files.
+    Only restart services that were previously running and are now stopped.
+    You have a maximum of 20 tool calls for this execution.
+
+max_timeout_seconds: 120
+max_actions: 20
+
+on_failure:
+  retry: true
+  retry_attempts: 3
+  retry_delay_seconds: 30

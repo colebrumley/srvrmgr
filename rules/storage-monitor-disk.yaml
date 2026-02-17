@@ -1,0 +1,81 @@
+name: storage-monitor-disk
+description: >-
+  Check disk usage every 30 minutes and alert when free space
+  drops below thresholds. Conditionally triggers cleanup if space is critical.
+enabled: true
+run_as_user: cole
+dry_run: true
+
+trigger:
+  type: scheduled
+  run_every: "30m"
+
+action:
+  prompt: |
+    Check disk usage and report status.
+
+    Timestamp: {{timestamp}}
+
+    STEP 1 — Check all mounted volumes:
+    Run `df -h` and parse the output. Focus on:
+    - / (root volume)
+    - /Volumes/Media (if mounted — media storage)
+    - Any other data volumes
+
+    STEP 2 — Evaluate thresholds:
+    - NORMAL (< 80% used): Log status only
+    - WARNING (80-90% used): Log warning with largest directories
+    - CRITICAL (90-95% used): Log critical alert, show top 10 largest
+      files/directories, suggest cleanup targets
+    - EMERGENCY (> 95% used): Log emergency, list ALL expendable items
+      (caches, temp files, old logs, transcoding cache)
+
+    STEP 3 — For WARNING or above:
+    - Run `du -sh /Volumes/Media/*/ 2>/dev/null | sort -rh | head -20` to find largest dirs
+    - Check Plex transcoding cache size: `du -sh ~/Library/Application\ Support/Plex\ Media\ Server/Cache/ 2>/dev/null`
+    - Check system temp: `du -sh /tmp/ /private/var/folders/ 2>/dev/null`
+
+    STEP 4 — Report:
+    - Current usage per volume (GB used / GB total / % used)
+    - Any volumes at WARNING or above with details
+    - Suggested cleanup actions if needed
+
+    STEP 5 — Conditional trigger:
+    If ANY volume is at WARNING level (80%+) or above, output this EXACT line
+    at the end of your response:
+    TRIGGER:storage-cleanup-caches
+    If all volumes are NORMAL, do NOT output any TRIGGER line.
+
+    Use recall for previous disk usage readings to spot trends.
+    Use remember to store current readings.
+
+claude:
+  model: haiku
+  allowed_tools:
+    - Bash
+    - Read
+  disallowed_tools:
+    - WebFetch
+    - WebSearch
+    - Write
+    - Edit
+    - Glob
+    - Grep
+  permission_mode: default
+  max_budget_usd: 0.10
+  memory: true
+  append_system_prompt: |
+    SAFETY: This is a monitoring rule. Do NOT delete or modify any files.
+    Only read disk usage information and report. You have a maximum of
+    15 tool calls for this execution.
+
+max_timeout_seconds: 120
+max_actions: 15
+
+triggers_rules:
+  - storage-cleanup-caches
+
+on_failure:
+  retry: true
+  retry_attempts: 2
+  retry_delay_seconds: 30

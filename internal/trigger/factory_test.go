@@ -31,7 +31,7 @@ func TestNewTrigger(t *testing.T) {
 				AllowedMethods: []string{"POST"},
 			}
 
-			trigger, err := New("test-rule", cfg)
+			trigger, err := New("test-rule", cfg, "")
 			if err != nil {
 				t.Fatalf("New failed: %v", err)
 			}
@@ -45,7 +45,7 @@ func TestNewTrigger(t *testing.T) {
 
 func TestNewTriggerUnknownType(t *testing.T) {
 	cfg := config.Trigger{Type: "unknown"}
-	_, err := New("test", cfg)
+	_, err := New("test", cfg, "")
 	if err == nil {
 		t.Error("expected error for unknown trigger type")
 	}

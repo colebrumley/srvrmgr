@@ -1,0 +1,79 @@
+name: server-startup-check
+description: >-
+  Comprehensive system health check that runs when the daemon starts.
+  Verifies services, storage, and connectivity.
+enabled: true
+run_as_user: cole
+dry_run: true
+
+trigger:
+  type: lifecycle
+  on_events:
+    - daemon_started
+
+action:
+  prompt: |
+    The srvrmgr daemon just started. Run a comprehensive system check.
+
+    Timestamp: {{timestamp}}
+
+    STEP 1 — System overview:
+    - Run: uname -a (system info)
+    - Run: uptime (system uptime and load)
+    - Run: sysctl hw.memsize (total RAM)
+    - Run: vm_stat (memory pressure)
+
+    STEP 2 — Disk status:
+    - Run: df -h (all mounted volumes)
+    - Flag any volume above 80% usage
+
+    STEP 3 — Service status:
+    - Run: brew services list
+    - Check if expected services are running
+    - Flag any stopped/errored services
+
+    STEP 4 — Network connectivity:
+    - Run: ping -c 1 8.8.8.8 (basic connectivity)
+    - Run: curl -s -o /dev/null -w '%{http_code}' http://localhost:32400/web (Plex)
+    - Run: curl -s -o /dev/null -w '%{http_code}' http://localhost:8096 (Jellyfin)
+
+    STEP 5 — srvrmgr status:
+    - Count rule files in rules directory
+    - Report which rules are enabled
+
+    REPORT:
+    - System status summary (healthy / degraded / critical)
+    - Any issues found that need attention
+    - Recommendations for immediate action
+
+    Use recall for previous startup check results to compare.
+    Use remember to store this check's results.
+
+claude:
+  model: haiku
+  allowed_tools:
+    - Bash
+    - Read
+    - Glob
+  disallowed_tools:
+    - WebFetch
+    - WebSearch
+    - Write
+    - Edit
+    - Grep
+  permission_mode: default
+  max_budget_usd: 0.15
+  memory: true
+  append_system_prompt: |
+    SAFETY: This is a read-only health check. Do NOT modify any files,
+    restart any services, or make any changes to the system.
+    Only read and report system status. You have a maximum of 20 tool calls.
+    Never output tokens, passwords, or API keys.
+
+max_timeout_seconds: 120
+max_actions: 20
+
+on_failure:
+  retry: true
+  retry_attempts: 2
+  retry_delay_seconds: 10

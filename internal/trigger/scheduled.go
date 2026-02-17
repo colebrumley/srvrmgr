@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +40,10 @@ func NewScheduled(ruleName string, cfg config.Trigger) (*Scheduled, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid schedule: %w", err)
 		}
+	} else {
+		// FR-9: Accept 5-field cron expressions by prepending "0" for seconds.
+		// Sourced from architect — named helper for clarity.
+		cronExpr = normalizeCronExpression(cronExpr)
 	}
 
 	_, err := c.AddFunc(cronExpr, func() {
@@ -82,6 +87,17 @@ func (s *Scheduled) Stop() error {
 	ctx := s.cron.Stop()
 	<-ctx.Done() // wait for running jobs to finish
 	return nil
+}
+
+// normalizeCronExpression converts 5-field cron expressions to 6-field
+// by prepending "0" for the seconds field (FR-9).
+// Sourced from architect — named helper is self-documenting.
+func normalizeCronExpression(expr string) string {
+	fields := strings.Fields(expr)
+	if len(fields) == 5 {
+		return "0 " + expr
+	}
+	return expr
 }
 
 // convertSimpleToCron converts run_every or run_at to cron expression.
