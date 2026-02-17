@@ -4,7 +4,6 @@ package trigger
 import (
 	"context"
 	"os"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,7 +23,7 @@ func TestFilesystemTrigger(t *testing.T) {
 		DebounceSeconds: 0, // No debounce for test
 	}
 
-	trigger, err := NewFilesystem("test-rule", triggerCfg)
+	trigger, err := NewFilesystem("test-rule", triggerCfg, "")
 	if err != nil {
 		t.Fatalf("NewFilesystem failed: %v", err)
 	}
@@ -92,7 +91,7 @@ func TestFilesystemTrigger_DirectoryCreated(t *testing.T) {
 		DebounceSeconds: 0,
 	}
 
-	trigger, err := NewFilesystem("dir-test-rule", triggerCfg)
+	trigger, err := NewFilesystem("dir-test-rule", triggerCfg, "")
 	if err != nil {
 		t.Fatalf("NewFilesystem failed: %v", err)
 	}
@@ -179,25 +178,4 @@ func TestExpandHomeForUser_InvalidUser(t *testing.T) {
 	_ = result
 }
 
-// expandHomeForUser is the function FR-12 requires to be implemented.
-// It resolves ~ to the specified user's home directory.
-// Defined here for testing until implemented in the main trigger package.
-func expandHomeForUser(path, username string) string {
-	if !strings.HasPrefix(path, "~/") {
-		return path
-	}
-
-	if username != "" {
-		u, err := user.Lookup(username)
-		if err == nil {
-			return filepath.Join(u.HomeDir, path[2:])
-		}
-	}
-
-	// Fallback to current user's home
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return path
-	}
-	return filepath.Join(home, path[2:])
-}
+// expandHomeForUser is now defined in filesystem.go.

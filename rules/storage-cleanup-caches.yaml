@@ -1,0 +1,89 @@
+name: storage-cleanup-caches
+description: >-
+  Clean Plex transcoding cache, Homebrew cache, and system caches
+  to reclaim disk space. Runs daily and on-demand when triggered
+  by storage-monitor-disk (only when disk pressure detected).
+enabled: true
+run_as_user: cole
+dry_run: true
+
+trigger:
+  type: scheduled
+  run_at: "03:00"
+
+action:
+  prompt: |
+    Clean caches and temporary files to reclaim disk space.
+
+    Timestamp: {{timestamp}}
+
+    TARGETS (clean in this order, safest first):
+
+    1. Plex Transcoding Cache:
+       - Path: ~/Library/Application Support/Plex Media Server/Cache/Transcode/
+       - Safe to delete: all files in this directory
+       - Check size before and after with `du -sh`
+
+    2. Homebrew Cache:
+       - Run: brew cleanup --prune=7 (remove downloads older than 7 days)
+       - Run: brew autoremove (remove unused dependencies)
+
+    3. System Caches (user-level):
+       - ~/Library/Caches/ — identify large caches (> 100MB) with `du -sh ~/Library/Caches/*/ | sort -rh | head -10`
+       - Only clean caches from known-safe applications
+       - Do NOT touch system caches in /Library/Caches/
+
+    4. macOS Derived Data (if Xcode installed):
+       - ~/Library/Developer/Xcode/DerivedData/ — safe to delete
+
+    5. Old log files:
+       - Find *.log files older than 30 days in ~/Library/Logs/
+       - Use: `find ~/Library/Logs -name "*.log" -mtime +30 -size +10M` (macOS-compatible)
+       - Delete only if > 10MB
+
+    SAFETY:
+    - Always check size before deleting
+    - Only delete files that are known-safe caches
+    - Never delete .app bundles, databases, or configuration files
+    - Log every deletion with file path and size reclaimed
+    - Only operate on paths listed above — do NOT explore other directories
+
+    REPORT:
+    - Total space reclaimed
+    - Breakdown by category
+    - Current disk usage after cleanup
+
+    Use recall for previous cleanup results.
+    Use remember to store cleanup results and any files that should NOT be deleted.
+
+claude:
+  model: sonnet
+  allowed_tools:
+    - Bash
+    - Read
+    - Glob
+    - Grep
+  disallowed_tools:
+    - WebFetch
+    - WebSearch
+    - Write
+    - Edit
+  add_dirs:
+    - ~/Library/Application Support/Plex Media Server/Cache
+    - ~/Library/Caches
+  permission_mode: default
+  max_budget_usd: 0.50
+  memory: true
+  append_system_prompt: |
+    SAFETY: Only delete files from the specific cache paths listed in the prompt.
+    Never delete files outside ~/Library/Caches, ~/Library/Logs,
+    ~/Library/Application Support/Plex Media Server/Cache, or
+    ~/Library/Developer/Xcode/DerivedData.
+    You have a maximum of 40 tool calls for this execution.
+    Never output tokens, passwords, or API keys.
+
+max_timeout_seconds: 300
+max_actions: 40
+
+on_failure:
+  retry: false

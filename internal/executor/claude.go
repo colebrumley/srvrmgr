@@ -129,12 +129,34 @@ func ExecuteWithMemory(ctx context.Context, prompt string, cfg config.ClaudeConf
 	}
 	defer cleanup()
 
+	// FR-18: Resolve env var references.
+	// Sourced from architect (os.ExpandEnv) for robustness — handles $VAR, ${VAR}, and more.
+	// Combined with convention's sudo env passthrough pattern.
+	resolved := resolveEnvVars(cfg.EnvVars)
+
 	var cmd *exec.Cmd
 	if user != "" {
-		sudoArgs := append([]string{"-u", user, "claude"}, args...)
+		sudoArgs := []string{"-u", user}
+		// FR-18: Pass env_vars through sudo using env command.
+		// Sourced from convention — sudo's env_reset would strip env vars otherwise.
+		if len(resolved) > 0 {
+			sudoArgs = append(sudoArgs, "env")
+			for k, v := range resolved {
+				sudoArgs = append(sudoArgs, k+"="+v)
+			}
+		}
+		sudoArgs = append(sudoArgs, "claude")
+		sudoArgs = append(sudoArgs, args...)
 		cmd = exec.CommandContext(ctx, "sudo", sudoArgs...)
 	} else {
 		cmd = exec.CommandContext(ctx, "claude", args...)
+		// FR-18: Pass env_vars directly when not using sudo
+		if len(resolved) > 0 {
+			cmd.Env = os.Environ()
+			for k, v := range resolved {
+				cmd.Env = append(cmd.Env, k+"="+v)
+			}
+		}
 	}
 
 	if workDir != "" {
@@ -177,4 +199,17 @@ func ExecuteWithMemory(ctx context.Context, prompt string, cfg config.ClaudeConf
 		Output:   string(output),
 		Duration: duration,
 	}, nil
+}
+
+// FR-18: resolveEnvVars expands environment variable references in values.
+// Uses os.ExpandEnv (sourced from architect) for robust expansion of $VAR and ${VAR}.
+func resolveEnvVars(envVars map[string]string) map[string]string {
+	if len(envVars) == 0 {
+		return nil
+	}
+	resolved := make(map[string]string, len(envVars))
+	for k, v := range envVars {
+		resolved[k] = os.ExpandEnv(v)
+	}
+	return resolved
 }

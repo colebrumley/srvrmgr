@@ -244,23 +244,7 @@ func TestParseTriggeredRules_EmptyOutput(t *testing.T) {
 	}
 }
 
-// parseTriggeredRules extracts TRIGGER:<rule-name> markers from output.
-// This is the function that FR-13 requires to be implemented in daemon.go.
-// We define it here for testing until it's implemented in the main code.
-func parseTriggeredRules(output string) []string {
-	var rules []string
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "TRIGGER:") {
-			ruleName := strings.TrimPrefix(line, "TRIGGER:")
-			ruleName = strings.TrimSpace(ruleName)
-			if ruleName != "" {
-				rules = append(rules, ruleName)
-			}
-		}
-	}
-	return rules
-}
+// parseTriggeredRules and expandHome are now defined in daemon.go.
 
 // ===== FR-12: expandHome resolves to run_as_user's home =====
 

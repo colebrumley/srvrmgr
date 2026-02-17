@@ -86,9 +86,10 @@ Commands:
 }
 
 func cmdInit() error {
+	rulesDir := filepath.Join(defaultConfigDir, "rules")
 	dirs := []string{
 		defaultConfigDir,
-		filepath.Join(defaultConfigDir, "rules"),
+		rulesDir,
 		defaultLogsDir,
 		filepath.Join(defaultLogsDir, "rules"),
 	}
@@ -98,6 +99,12 @@ func cmdInit() error {
 			return fmt.Errorf("creating directory %s: %w", dir, err)
 		}
 		fmt.Printf("Created %s\n", dir)
+	}
+
+	// FR-14: Set secure permissions on rules directory.
+	// Sourced from convention — 0700 is more restrictive than architect's 0750.
+	if err := os.Chmod(rulesDir, 0700); err != nil {
+		return fmt.Errorf("setting rules directory permissions: %w", err)
 	}
 
 	// Create default config if it doesn't exist
@@ -267,6 +274,9 @@ func cmdRun(args []string) error {
 func cmdLogs(args []string) error {
 	fs := flag.NewFlagSet("logs", flag.ExitOnError)
 	follow := fs.Bool("f", false, "follow logs")
+	// FR-10: --follow alias for -f.
+	// Sourced from convention.
+	fs.BoolVar(follow, "follow", false, "follow logs")
 	fs.Parse(args)
 
 	var logPath string

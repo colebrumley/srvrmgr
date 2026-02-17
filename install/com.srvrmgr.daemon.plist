@@ -23,11 +23,7 @@
     <key>ThrottleInterval</key>
     <integer>10</integer>
 
-    <key>StandardOutPath</key>
-    <string>/Library/Logs/srvrmgr/srvrmgrd.stdout.log</string>
-
-    <key>StandardErrorPath</key>
-    <string>/Library/Logs/srvrmgr/srvrmgrd.stderr.log</string>
+    <!-- FR-6: StandardOutPath/StandardErrorPath removed — daemon manages its own log file via RotatingWriter -->
 
     <key>EnvironmentVariables</key>
     <dict>
