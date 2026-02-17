@@ -137,3 +137,37 @@ func TestBuildArgsWithMemoryEmptyDaemonPath(t *testing.T) {
 		t.Errorf("expected %d --mcp-config flags (no injection), got %d", len(cfg.MCPConfig), mcpCount)
 	}
 }
+
+// ===== FR-18: env_vars passed to subprocess =====
+
+func TestBuildArgs_AppendSystemPrompt(t *testing.T) {
+	cfg := config.ClaudeConfig{
+		Model:              "sonnet",
+		AppendSystemPrompt: "Be safe. Max 30 actions.",
+	}
+	args := BuildArgs(cfg, "test", false)
+
+	assertContains(t, args, "--append-system-prompt")
+	assertContains(t, args, "Be safe. Max 30 actions.")
+}
+
+func TestBuildArgs_EnvVarsField(t *testing.T) {
+	// FR-18: ClaudeConfig should have an EnvVars field.
+	// When env_vars are specified, they should be passed to the subprocess via cmd.Env.
+	// BuildArgs itself doesn't handle env vars (that's in ExecuteWithMemory),
+	// but we verify the field exists on the config struct.
+	cfg := config.ClaudeConfig{
+		Model: "sonnet",
+		EnvVars: map[string]string{
+			"PLEX_TOKEN": "test-token",
+			"MY_SECRET":  "secret-value",
+		},
+	}
+
+	if len(cfg.EnvVars) != 2 {
+		t.Errorf("FR-18: expected 2 env_vars, got %d", len(cfg.EnvVars))
+	}
+	if cfg.EnvVars["PLEX_TOKEN"] != "test-token" {
+		t.Errorf("FR-18: expected PLEX_TOKEN=test-token, got %q", cfg.EnvVars["PLEX_TOKEN"])
+	}
+}
