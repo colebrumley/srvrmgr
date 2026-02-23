@@ -8,7 +8,17 @@ MODEL_URL := https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resol
 
 PREFIX := /usr/local
 PLIST_SRC := install/com.srvrmgr.daemon.plist
-PLIST_DST := $(HOME)/Library/LaunchAgents/com.srvrmgr.daemon.plist
+
+# When run under sudo, resolve the real user's UID and home directory
+ifdef SUDO_USER
+_UID := $(shell id -u $(SUDO_USER))
+_HOME := $(shell dscl . -read /Users/$(SUDO_USER) NFSHomeDirectory | awk '{print $$2}')
+else
+_UID := $(shell id -u)
+_HOME := $(HOME)
+endif
+
+PLIST_DST := $(_HOME)/Library/LaunchAgents/com.srvrmgr.daemon.plist
 
 build: $(DAEMON) $(CLI)
 
@@ -34,15 +44,15 @@ install: $(DAEMON) $(CLI)
 	install -m 755 $(DAEMON) $(PREFIX)/bin/srvrmgrd
 	install -m 755 $(CLI) $(PREFIX)/bin/srvrmgr
 	@echo "Installing launchd agent..."
-	@mkdir -p $(HOME)/Library/LaunchAgents
+	@mkdir -p $(_HOME)/Library/LaunchAgents
 	@sed 's|/usr/local/bin/srvrmgrd|$(PREFIX)/bin/srvrmgrd|g' $(PLIST_SRC) > $(PLIST_DST)
-	launchctl bootout gui/$$(id -u) $(PLIST_DST) 2>/dev/null || true
-	launchctl bootstrap gui/$$(id -u) $(PLIST_DST)
+	launchctl bootout gui/$(_UID) $(PLIST_DST) 2>/dev/null || true
+	launchctl bootstrap gui/$(_UID) $(PLIST_DST)
 	@echo "srvrmgr installed and daemon started."
 
 uninstall:
 	@echo "Stopping daemon..."
-	launchctl bootout gui/$$(id -u) $(PLIST_DST) 2>/dev/null || true
+	launchctl bootout gui/$(_UID) $(PLIST_DST) 2>/dev/null || true
 	@echo "Removing launchd plist..."
 	rm -f $(PLIST_DST)
 	@echo "Removing binaries..."
