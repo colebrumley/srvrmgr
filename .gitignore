@@ -27,3 +27,4 @@ internal/embedder/models/model.onnx
 # Database files
 *.db
 memory.db
+.specs/

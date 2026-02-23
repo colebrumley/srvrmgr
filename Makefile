@@ -1,10 +1,14 @@
-.PHONY: build test clean download-model
+.PHONY: build test clean download-model install uninstall
 
 BINDIR := bin
 DAEMON := $(BINDIR)/srvrmgrd
 CLI := $(BINDIR)/srvrmgr
 MODEL := internal/embedder/models/model.onnx
 MODEL_URL := https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx
+
+PREFIX := /usr/local
+PLIST_SRC := install/com.srvrmgr.daemon.plist
+PLIST_DST := $(HOME)/Library/LaunchAgents/com.srvrmgr.daemon.plist
 
 build: $(DAEMON) $(CLI)
 
@@ -23,6 +27,27 @@ download-model: $(MODEL)
 
 test: $(MODEL)
 	go test -v ./...
+
+install: $(DAEMON) $(CLI)
+	@echo "Installing binaries to $(PREFIX)/bin..."
+	install -d $(PREFIX)/bin
+	install -m 755 $(DAEMON) $(PREFIX)/bin/srvrmgrd
+	install -m 755 $(CLI) $(PREFIX)/bin/srvrmgr
+	@echo "Installing launchd agent..."
+	@mkdir -p $(HOME)/Library/LaunchAgents
+	@sed 's|/usr/local/bin/srvrmgrd|$(PREFIX)/bin/srvrmgrd|g' $(PLIST_SRC) > $(PLIST_DST)
+	launchctl bootout gui/$$(id -u) $(PLIST_DST) 2>/dev/null || true
+	launchctl bootstrap gui/$$(id -u) $(PLIST_DST)
+	@echo "srvrmgr installed and daemon started."
+
+uninstall:
+	@echo "Stopping daemon..."
+	launchctl bootout gui/$$(id -u) $(PLIST_DST) 2>/dev/null || true
+	@echo "Removing launchd plist..."
+	rm -f $(PLIST_DST)
+	@echo "Removing binaries..."
+	rm -f $(PREFIX)/bin/srvrmgrd $(PREFIX)/bin/srvrmgr
+	@echo "srvrmgr uninstalled."
 
 clean:
 	rm -rf $(BINDIR)
