@@ -3,7 +3,7 @@ description: >-
   Comprehensive system health check that runs when the daemon starts.
   Verifies services, storage, and connectivity.
 enabled: true
-run_as_user: cole
+run_as_user: server
 dry_run: true
 
 trigger:

@@ -3,7 +3,7 @@ description: >-
   Check disk usage every 30 minutes and alert when free space
   drops below thresholds. Conditionally triggers cleanup if space is critical.
 enabled: true
-run_as_user: cole
+run_as_user: server
 dry_run: true
 
 trigger:

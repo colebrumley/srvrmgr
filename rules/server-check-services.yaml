@@ -3,7 +3,7 @@ description: >-
   Check status of Homebrew-managed services every 15 minutes.
   Restart any crashed services and log issues.
 enabled: true
-run_as_user: cole
+run_as_user: server
 dry_run: true
 
 trigger:

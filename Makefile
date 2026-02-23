@@ -45,9 +45,13 @@ install: $(DAEMON) $(CLI)
 	install -m 755 $(DAEMON) $(PREFIX)/bin/srvrmgrd
 	install -m 755 $(CLI) $(PREFIX)/bin/srvrmgr
 	@echo "Creating data directories..."
-	install -d "$(CONFDIR)/rules" "$(CONFDIR)/state" /Library/Logs/srvrmgr
+	install -d "$(CONFDIR)/rules" "$(CONFDIR)/state" /Library/Logs/srvrmgr /Library/Logs/srvrmgr/rules
+ifdef SUDO_USER
+	chown -R $(SUDO_USER):staff "$(CONFDIR)" /Library/Logs/srvrmgr
+endif
 	@echo "Installing rules..."
 	install -m 644 rules/*.yaml "$(CONFDIR)/rules/"
+	chmod 700 "$(CONFDIR)/rules"
 	@echo "Installing launchd agent..."
 	@mkdir -p $(_HOME)/Library/LaunchAgents
 	@sed 's|/usr/local/bin/srvrmgrd|$(PREFIX)/bin/srvrmgrd|g' $(PLIST_SRC) > $(PLIST_DST)
