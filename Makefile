@@ -49,8 +49,16 @@ install: $(DAEMON) $(CLI)
 ifdef SUDO_USER
 	chown -R $(SUDO_USER):staff "$(CONFDIR)" /Library/Logs/srvrmgr
 endif
-	@echo "Installing rules..."
-	install -m 644 rules/*.yaml "$(CONFDIR)/rules/"
+	@echo "Installing rules (new rules only, existing rules preserved)..."
+	@for f in rules/*.yaml; do \
+		dest="$(CONFDIR)/rules/$$(basename $$f)"; \
+		if [ ! -f "$$dest" ]; then \
+			install -m 644 "$$f" "$$dest"; \
+			echo "  installed $$(basename $$f)"; \
+		else \
+			echo "  skipped $$(basename $$f) (already exists)"; \
+		fi; \
+	done
 	chmod 700 "$(CONFDIR)/rules"
 	@echo "Installing launchd agent..."
 	@mkdir -p $(_HOME)/Library/LaunchAgents

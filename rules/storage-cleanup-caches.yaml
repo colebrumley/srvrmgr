@@ -4,7 +4,7 @@ description: >-
   to reclaim disk space. Runs daily and on-demand when triggered
   by storage-monitor-disk (only when disk pressure detected).
 enabled: true
-run_as_user: server
+run_as_user: cole
 dry_run: true
 
 trigger:
