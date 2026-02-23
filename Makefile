@@ -7,6 +7,7 @@ MODEL := internal/embedder/models/model.onnx
 MODEL_URL := https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx
 
 PREFIX := /usr/local
+CONFDIR := /Library/Application Support/srvrmgr
 PLIST_SRC := install/com.srvrmgr.daemon.plist
 
 # When run under sudo, resolve the real user's UID and home directory
@@ -43,6 +44,10 @@ install: $(DAEMON) $(CLI)
 	install -d $(PREFIX)/bin
 	install -m 755 $(DAEMON) $(PREFIX)/bin/srvrmgrd
 	install -m 755 $(CLI) $(PREFIX)/bin/srvrmgr
+	@echo "Creating data directories..."
+	install -d "$(CONFDIR)/rules" "$(CONFDIR)/state" /Library/Logs/srvrmgr
+	@echo "Installing rules..."
+	install -m 644 rules/*.yaml "$(CONFDIR)/rules/"
 	@echo "Installing launchd agent..."
 	@mkdir -p $(_HOME)/Library/LaunchAgents
 	@sed 's|/usr/local/bin/srvrmgrd|$(PREFIX)/bin/srvrmgrd|g' $(PLIST_SRC) > $(PLIST_DST)
@@ -57,6 +62,8 @@ uninstall:
 	rm -f $(PLIST_DST)
 	@echo "Removing binaries..."
 	rm -f $(PREFIX)/bin/srvrmgrd $(PREFIX)/bin/srvrmgr
+	@echo "Removing data directories..."
+	rm -rf "$(CONFDIR)" /Library/Logs/srvrmgr
 	@echo "srvrmgr uninstalled."
 
 clean:
