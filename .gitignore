@@ -28,3 +28,4 @@ internal/embedder/models/model.onnx
 *.db
 memory.db
 .specs/
+.critiques/

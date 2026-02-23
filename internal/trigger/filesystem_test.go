@@ -1,4 +1,5 @@
-// internal/trigger/filesystem_test.go
+//go:build darwin
+
 package trigger
 
 import (
@@ -12,15 +13,17 @@ import (
 	"github.com/colebrumley/srvrmgr/internal/config"
 )
 
+const fsEventsInitDelay = 500 * time.Millisecond
+
 func TestFilesystemTrigger(t *testing.T) {
-	dir := t.TempDir()
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
 
 	triggerCfg := config.Trigger{
 		Type:            "filesystem",
 		WatchPaths:      []string{dir},
 		OnEvents:        []string{"file_created"},
 		IgnorePatterns:  []string{"*.tmp"},
-		DebounceSeconds: 0, // No debounce for test
+		DebounceSeconds: 0,
 	}
 
 	trigger, err := NewFilesystem("test-rule", triggerCfg, "")
@@ -38,8 +41,7 @@ func TestFilesystemTrigger(t *testing.T) {
 		}
 	}()
 
-	// Give watcher time to start
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(fsEventsInitDelay)
 
 	// Create a file
 	testFile := filepath.Join(dir, "test.txt")
@@ -74,7 +76,7 @@ func TestFilesystemTrigger(t *testing.T) {
 	select {
 	case event := <-events:
 		t.Errorf("unexpected event for ignored file: %+v", event)
-	case <-time.After(200 * time.Millisecond):
+	case <-time.After(500 * time.Millisecond):
 		// Expected - no event
 	}
 }
@@ -82,7 +84,7 @@ func TestFilesystemTrigger(t *testing.T) {
 // ===== FR-11: Emit directory_created for directories =====
 
 func TestFilesystemTrigger_DirectoryCreated(t *testing.T) {
-	dir := t.TempDir()
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
 
 	triggerCfg := config.Trigger{
 		Type:            "filesystem",
@@ -106,8 +108,7 @@ func TestFilesystemTrigger_DirectoryCreated(t *testing.T) {
 		}
 	}()
 
-	// Give watcher time to start
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(fsEventsInitDelay)
 
 	// Create a directory (not a file)
 	subDir := filepath.Join(dir, "new-directory")
@@ -118,7 +119,6 @@ func TestFilesystemTrigger_DirectoryCreated(t *testing.T) {
 	// Wait for event
 	select {
 	case event := <-events:
-		// FR-11: The event type should be "directory_created" for directories
 		if event.Type != "directory_created" {
 			t.Errorf("FR-11: expected event type 'directory_created' for directory creation, got %q", event.Type)
 		}
@@ -130,13 +130,71 @@ func TestFilesystemTrigger_DirectoryCreated(t *testing.T) {
 	}
 }
 
+func TestFilesystemTrigger_DoubleStartReturnsError(t *testing.T) {
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
+
+	triggerCfg := config.Trigger{
+		Type:       "filesystem",
+		WatchPaths: []string{dir},
+		OnEvents:   []string{"file_created"},
+	}
+
+	trigger, err := NewFilesystem("double-start", triggerCfg, "")
+	if err != nil {
+		t.Fatalf("NewFilesystem failed: %v", err)
+	}
+
+	events := make(chan Event, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		_ = trigger.Start(ctx, events)
+	}()
+	time.Sleep(fsEventsInitDelay)
+
+	// Second Start should return an error
+	err = trigger.Start(ctx, events)
+	if err == nil {
+		t.Error("expected error on double Start(), got nil")
+	}
+}
+
+func TestFilesystemTrigger_StopIsIdempotent(t *testing.T) {
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
+
+	triggerCfg := config.Trigger{
+		Type:       "filesystem",
+		WatchPaths: []string{dir},
+		OnEvents:   []string{"file_created"},
+	}
+
+	trigger, err := NewFilesystem("stop-test", triggerCfg, "")
+	if err != nil {
+		t.Fatalf("NewFilesystem failed: %v", err)
+	}
+
+	events := make(chan Event, 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		_ = trigger.Start(ctx, events)
+	}()
+	time.Sleep(fsEventsInitDelay)
+
+	// Multiple Stop calls should not panic
+	if err := trigger.Stop(); err != nil {
+		t.Errorf("first Stop failed: %v", err)
+	}
+	if err := trigger.Stop(); err != nil {
+		t.Errorf("second Stop failed: %v", err)
+	}
+}
+
 // ===== FR-12: expandHomeForUser resolves to correct user's home =====
 
 func TestExpandHomeForUser_ResolvesCorrectHome(t *testing.T) {
-	// FR-12: expandHomeForUser should use os/user.Lookup to resolve ~
-	// to the specified user's home directory, not os.UserHomeDir (root's home).
-
-	// Test with current user (should work without root privileges)
 	currentUser := os.Getenv("USER")
 	if currentUser == "" {
 		t.Skip("USER env var not set")
@@ -154,8 +212,17 @@ func TestExpandHomeForUser_ResolvesCorrectHome(t *testing.T) {
 	}
 }
 
+func TestExpandHomeForUser_BareTilde(t *testing.T) {
+	result := expandHomeForUser("~", "")
+	if result == "~" {
+		t.Error("bare ~ should be expanded to home directory")
+	}
+	if !filepath.IsAbs(result) {
+		t.Errorf("result should be absolute path, got %q", result)
+	}
+}
+
 func TestExpandHomeForUser_EmptyUser(t *testing.T) {
-	// FR-12: Empty username should fall back to os.UserHomeDir()
 	result := expandHomeForUser("~/test", "")
 	if result == "~/test" {
 		t.Error("FR-12: should still expand ~ when user is empty (fallback)")
@@ -163,7 +230,6 @@ func TestExpandHomeForUser_EmptyUser(t *testing.T) {
 }
 
 func TestExpandHomeForUser_NoTilde(t *testing.T) {
-	// Paths without ~ should be returned unchanged
 	result := expandHomeForUser("/absolute/path", "cole")
 	if result != "/absolute/path" {
 		t.Errorf("FR-12: non-tilde path should be unchanged, got %q", result)
@@ -171,11 +237,15 @@ func TestExpandHomeForUser_NoTilde(t *testing.T) {
 }
 
 func TestExpandHomeForUser_InvalidUser(t *testing.T) {
-	// FR-12: Invalid user should fall back to os.UserHomeDir()
+	// Invalid user should fall back to current user's home directory
 	result := expandHomeForUser("~/test", "nonexistent-user-xyz-12345")
-	// Should either expand using fallback or return original
-	// The key thing: it should not panic
-	_ = result
+	if result == "~/test" {
+		t.Error("FR-12: should fall back to current user's home for invalid user")
+	}
+	if !filepath.IsAbs(result) {
+		t.Errorf("FR-12: result should be absolute path, got %q", result)
+	}
+	if !strings.HasSuffix(result, "/test") {
+		t.Errorf("FR-12: expected path ending in /test, got %q", result)
+	}
 }
-
-// expandHomeForUser is now defined in filesystem.go.

@@ -69,6 +69,7 @@ type Trigger struct {
 	OnEvents        []string `yaml:"on_events"`
 	IgnorePatterns  []string `yaml:"ignore_patterns"`
 	DebounceSeconds int      `yaml:"debounce_seconds"`
+	Recursive       bool     `yaml:"recursive"`
 	// Scheduled
 	CronExpression string `yaml:"cron_expression"`
 	RunEvery       string `yaml:"run_every"`
